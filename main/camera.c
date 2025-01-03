@@ -309,9 +309,14 @@ static void jade_camera_init(void)
     // OV5640 needs vertical flip for T-Display S3 PRO
     else if (camera_info->model == CAMERA_OV5640) {
         JADE_ASSERT(camera_sensor->set_vflip);
+        JADE_ASSERT(camera_sensor->auto_focus_mode);
         const int vret = camera_sensor->set_vflip(camera_sensor, 1);
+        const int fret = camera_sensor->auto_focus_mode(camera_sensor);
         if (vret) {
             JADE_LOGE("Failed to set camera vflip, returned: %d", vret);
+        }
+        if (fret) {
+            JADE_LOGE("Failed to set camera focus mode, returned: %d", fret);
         }
     }
 #if defined(CONFIG_DISPLAY_TOUCHSCREEN)
