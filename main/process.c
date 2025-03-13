@@ -1,13 +1,11 @@
 #include "process.h"
+#include "ble/ble.h"
 #include "jade_assert.h"
 #include "jade_wally_verify.h"
 #include "power.h"
 #include "process/process_utils.h"
 #include "utils/cbor_rpc.h"
 #include "utils/malloc_ext.h"
-#ifdef CONFIG_BT_ENABLED
-#include "../ble/ble.h"
-#endif
 
 #include <esp_mac.h>
 #include <freertos/FreeRTOS.h>
@@ -260,8 +258,9 @@ bool jade_process_push_in_message(const uint8_t* data, const size_t size)
         JADE_LOGE("Message of size %u too large for input queue (max: %u)", size, xRingbufferGetMaxItemSize(shared_in));
         return false;
     }
-    while (xRingbufferSend(shared_in, data, size, 10 / portTICK_PERIOD_MS) != pdTRUE) {
+    while (xRingbufferSend(shared_in, data, size, 500 / portTICK_PERIOD_MS) != pdTRUE) {
         // wait for a spot in the ringbuffer
+        JADE_LOGW("Failed to send input message using shared input ringbuffer");
     }
 
     return true;
@@ -368,10 +367,6 @@ static void dump_mem_report(void)
     }
 }
 #endif /* CONFIG_HEAP_TRACING */
-
-#ifndef CONFIG_BT_ENABLED
-static inline bool ble_connected(void) { return false; }
-#endif
 
 void jade_process_get_in_message(void* ctx, inbound_message_reader_fn_t reader, bool blocking)
 {

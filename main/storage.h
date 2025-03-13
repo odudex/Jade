@@ -24,6 +24,7 @@
 #define QR_XPUB_MULTISIG 0x200
 #define QR_XPUB_HDKEY 0x400
 #define QR_XPUB_LEGACY 0x800
+#define QR_XPUB_TAPROOT 0x1000
 
 #define KEY_FLAGS_AUTO_DEFAULT_PASSPHRASE 0x1
 #define KEY_FLAGS_USER_TO_ENTER_PASSPHRASE 0x2
@@ -47,7 +48,7 @@ bool storage_get_encrypted_blob(uint8_t* encrypted, size_t encrypted_len, size_t
 bool storage_decrement_counter(void);
 bool storage_restore_counter(void);
 uint8_t storage_get_counter(void);
-bool storage_get_replay_counter(uint8_t* replay_counter);
+bool storage_get_replay_counter(uint32_t* replay_counter);
 bool storage_erase_encrypted_blob(void);
 
 bool storage_set_key_flags(uint8_t flags);

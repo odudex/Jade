@@ -33,15 +33,15 @@ origin of the repo in the docker.
 
 Jade requires the esp-idf sdk.
 
-More information is available in the [Espressif official guide](https://docs.espressif.com/projects/esp-idf/en/v5.3.1/esp32/get-started/index.html).
+More information is available in the [Espressif official guide](https://docs.espressif.com/projects/esp-idf/en/v5.4/esp32/get-started/index.html).
 
 Get the esp-idf sdk and required tools:
 
 ```
 mkdir ~/esp
 cd ~/esp
-git clone -b v5.3.1 --recursive https://github.com/espressif/esp-idf.git
-cd ~/esp/esp-idf && git checkout c8fc5f643b7a7b0d3b182d3df610844e3dc9bd74 && ./install.sh --enable-gdbgui esp32 esp32s3
+git clone -b v5.4 --recursive https://github.com/espressif/esp-idf.git
+cd ~/esp/esp-idf && git checkout 67c1de1eebe095d554d281952fde63c16ee2dca0 && ./install.sh --enable-gdbgui esp32 esp32s3
 ```
 
 Set up the environmental variables:
@@ -50,16 +50,16 @@ Set up the environmental variables:
 . $HOME/esp/esp-idf/export.sh
 ```
 
-On MacOS: You will need cmake on your system for this step (`brew install cmake`).
+On MacOS: You will need cmake and ninja on your system for this step (`brew install cmake ninja`).
 
 If you encounter Python dependencies issue, make sure to use a recent Python version (e.g. Python 3.11) as the current system version which is used by the install script.
 
 # Build dependencies
 
-Cmake is needed to build the firmware, you can install in on debian based distros with:
+Cmake and ninja are needed to build the firmware, you can install them on debian based distros with:
 
 ``` 
-sudo apt install cmake
+sudo apt install cmake ninja-build
 ```
 
 # Serial port
@@ -95,6 +95,7 @@ sudo usermod -aG dialout $USER
 ```
 git clone --recursive https://github.com/Blockstream/Jade.git $HOME/jade
 cd $HOME/jade
+git submodule update --init --recursive
 cp configs/sdkconfig_jade.defaults sdkconfig.defaults
 idf.py flash monitor
 ```

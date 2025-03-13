@@ -500,7 +500,7 @@ gui_activity_t* make_wallet_erase_pin_info_activity(void)
     gui_activity_t* const act = make_show_message_activity(message, 3, "Wallet-Erase PIN", hdrbtns, 2, &ftrbtn, 1);
 
     // Set the intially selected item to the 'Continue' button
-    gui_set_activity_initial_selection(act, ftrbtn.btn);
+    gui_set_activity_initial_selection(ftrbtn.btn);
 
     return act;
 }
@@ -602,7 +602,7 @@ gui_activity_t* make_info_activity(const char* fw_version)
 
     gui_view_node_t* fwver;
     gui_make_text(&fwver, "Firmware:", TFT_WHITE);
-    gui_set_align(fwver, GUI_ALIGN_MIDDLE, GUI_ALIGN_MIDDLE);
+    gui_set_align(fwver, GUI_ALIGN_CENTER, GUI_ALIGN_MIDDLE);
     gui_set_parent(fwver, splitfw);
 
     gui_make_text(&fwver, fw_version, TFT_WHITE);
@@ -707,28 +707,26 @@ static void make_legal_page(link_activity_t* page_act, int legal_page)
         break;
     }
     case 2: {
-        gui_view_node_t* key;
-        gui_make_text(&key,
+        gui_make_text(&node,
             "device may not cause\n"
             "harmful interference\n"
             "and (2) this device\n"
             "must accept any\n"
             "interference received",
             TFT_WHITE);
-        gui_set_parent(key, parent);
-        gui_set_align(key, GUI_ALIGN_LEFT, GUI_ALIGN_TOP);
+        gui_set_parent(node, parent);
+        gui_set_align(node, GUI_ALIGN_LEFT, GUI_ALIGN_TOP);
         gui_set_padding(node, GUI_MARGIN_ALL_DIFFERENT, 8, 0, 0, 4);
         break;
     }
     case 3: {
-        gui_view_node_t* key;
-        gui_make_text(&key,
+        gui_make_text(&node,
             "including interference\n"
             "that may cause\n"
             "undesired operation.",
             TFT_WHITE);
-        gui_set_parent(key, parent);
-        gui_set_align(key, GUI_ALIGN_LEFT, GUI_ALIGN_TOP);
+        gui_set_parent(node, parent);
+        gui_set_align(node, GUI_ALIGN_LEFT, GUI_ALIGN_TOP);
         gui_set_padding(node, GUI_MARGIN_ALL_DIFFERENT, 8, 0, 0, 4);
         break;
     }
@@ -764,7 +762,7 @@ static void make_legal_page(link_activity_t* page_act, int legal_page)
     }
 
     // Set the intially selected item to the next/verify (ie. the last) button
-    gui_set_activity_initial_selection(act, hdrbtns[1].btn);
+    gui_set_activity_initial_selection(hdrbtns[1].btn);
 
     // Copy activity and prev and next buttons into output struct
     page_act->activity = act;

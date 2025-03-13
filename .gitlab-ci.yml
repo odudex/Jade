@@ -7,7 +7,7 @@ stages:
   - test
   - deploy
 
-image: blockstream/verde@sha256:c6b59066998c138c7e43a8bc12ed6f9e83ebe3476ab4c5b73619390c495ab948
+image: blockstream/verde@sha256:391a4337c174f2eb47dc9f31d7e25d19a5f101bbc07fa8a296866c1ee52b8473
 
 test_bip85_rsa_key_gen:
   tags:
@@ -57,6 +57,7 @@ test_configs:
   script:
     - . $HOME/esp/esp-idf/export.sh
     - idf.py all size-components size
+    - source /venv/bin/activate
     - ./tools/fwprep.py build/jade.bin build
     - ./tools/mkindex.py build $(basename $(ls build/*_fw.bin) | cut -d'_' -f1)
     - cp sdkconfig build/
@@ -402,10 +403,10 @@ test_flash_qemu_psram:
   tags:
     - esp32s3flasher
   variables:
-    IDF_TOOLS_PATH: "/home/gitlab-runner/.idf/531"
+    IDF_TOOLS_PATH: "/home/gitlab-runner/.idf/54"
   script:
     - cp build*/sdkconfig ./
-    - . $HOME/esp/esp-idf-5.3.1/export.sh
+    - . $HOME/esp/esp-idf-5.4/export.sh
     - ./ci_flash.sh esp32s3
 
 test_flash_artifact:
@@ -428,10 +429,10 @@ test_gcov:
     - esp32s3flasher
   stage: build
   variables:
-    IDF_TOOLS_PATH: "/home/gitlab-runner/.idf/531"
+    IDF_TOOLS_PATH: "/home/gitlab-runner/.idf/54"
   script:
     - cp configs/sdkconfig_display_ttgo_tdisplays3_gcov_ci.defaults sdkconfig.defaults
-    - . $HOME/esp/esp-idf-5.3.1/export.sh
+    - . $HOME/esp/esp-idf-5.4/export.sh
     - idf.py all size-components size
     - ./tools/fwprep.py build/jade.bin build
     - ./tools/mkindex.py build $(basename $(ls build/*_fw.bin) | cut -d'_' -f1)

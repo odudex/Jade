@@ -8,7 +8,6 @@
 #include "jlocale.h"
 
 extern color_t _fg;
-extern uint8_t text_wrap;
 
 // Additional colour tokens
 extern const color_t GUI_BLOCKSTREAM_JADE_GREEN;
@@ -195,7 +194,7 @@ struct view_node_split_data {
     // type of split
     enum gui_split_type kind;
     // their values
-    uint8_t* values;
+    uint16_t* values;
     // how many parts
     uint8_t parts;
 };
@@ -217,9 +216,9 @@ struct view_node_text_scroll_data {
     bool going_back;
 
     // chars to skip
-    uint8_t offset;
+    size_t offset;
     // chars we skipped the last time we rendered it
-    uint8_t prev_offset;
+    size_t prev_offset;
     // iterations left to wait here (without moving the text)
     // used when we reach one end of the string and we want to wait a while there
     uint8_t wait;
@@ -413,13 +412,11 @@ bool gui_initialized(void);
 
 void gui_make_activity_ex(gui_activity_t** ppact, const bool has_status_bar, const char* title, const bool managed);
 gui_activity_t* gui_make_activity(void);
-void free_unmanaged_activity(gui_activity_t* activity);
 
 void gui_set_parent(gui_view_node_t* child, gui_view_node_t* parent);
 void gui_chain_activities(const link_activity_t* link_act, linked_activities_info_t* pActInfo);
-void free_view_node(gui_view_node_t* node);
-void gui_make_hsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint32_t parts, ...);
-void gui_make_vsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint32_t parts, ...);
+void gui_make_hsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint8_t parts, ...);
+void gui_make_vsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint8_t parts, ...);
 void gui_make_button(gui_view_node_t** ptr, color_t color, color_t selected_color, uint32_t event_id, void* args);
 void gui_make_fill(gui_view_node_t** ptr, color_t color);
 void gui_make_text(gui_view_node_t** ptr, const char* text, color_t color);
@@ -455,9 +452,10 @@ void gui_activity_register_event(
 bool gui_activity_wait_event(gui_activity_t* activity, const char* event_base, uint32_t event_id,
     esp_event_base_t* trigger_event_base, int32_t* trigger_event_id, void** trigger_event_data, TickType_t max_wait);
 
-void gui_set_activity_initial_selection(gui_activity_t* activity, gui_view_node_t* node);
-bool gui_set_active(gui_activity_t* activity, gui_view_node_t* node, bool value);
-void gui_select_node(gui_activity_t* activity, gui_view_node_t* node);
+void gui_set_activity_initial_selection(gui_view_node_t* node);
+void gui_set_active(gui_view_node_t* node, bool value);
+void gui_activity_set_active_selection(
+    gui_activity_t* activity, gui_view_node_t** nodes, size_t num_nodes, const bool* active, gui_view_node_t* selected);
 
 void gui_set_activity_title(gui_activity_t* activity, const char* title);
 

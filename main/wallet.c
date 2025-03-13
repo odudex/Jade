@@ -41,6 +41,7 @@ static const uint32_t BIP45_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 45;
 static const uint32_t BIP48_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 48;
 static const uint32_t BIP49_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 49;
 static const uint32_t BIP84_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 84;
+static const uint32_t BIP86_PURPOSE = BIP32_INITIAL_HARDENED_CHILD + 86;
 
 // Maximum number of csv blocks allowed in csv scripts
 static const uint32_t MAX_CSV_BLOCKS_ALLOWED = 65535;
@@ -53,6 +54,7 @@ static const uint32_t MAX_CSV_BLOCKS_ALLOWED = 65535;
 #define VARIANT_P2PKH "pkh(k)"
 #define VARIANT_P2WPKH "wpkh(k)"
 #define VARIANT_P2WPKH_P2SH "sh(wpkh(k))"
+#define VARIANT_P2TR "tr(k)"
 // 2. multisig
 #define VARIANT_MULTI_P2WSH "wsh(multi(k))"
 #define VARIANT_MULTI_P2SH "sh(multi(k))"
@@ -164,6 +166,8 @@ size_t script_length_for_variant(const script_variant_t variant)
         return WALLY_SCRIPTPUBKEY_P2PKH_LEN;
     case P2WPKH:
         return WALLY_SCRIPTPUBKEY_P2WPKH_LEN;
+    case P2TR:
+        return WALLY_SCRIPTPUBKEY_P2TR_LEN;
     case GREEN:
     case P2WPKH_P2SH:
     case MULTI_P2SH:
@@ -186,6 +190,8 @@ const char* get_script_variant_string(const script_variant_t variant)
         return VARIANT_P2WPKH;
     case P2WPKH_P2SH:
         return VARIANT_P2WPKH_P2SH;
+    case P2TR:
+        return VARIANT_P2TR;
     case MULTI_P2WSH:
         return VARIANT_MULTI_P2WSH;
     case MULTI_P2SH:
@@ -194,6 +200,28 @@ const char* get_script_variant_string(const script_variant_t variant)
         return VARIANT_MULTI_P2WSH_P2SH;
     default:
         return NULL;
+    }
+}
+
+// Map a script-variant enum value into its BIP-44 'purpose' value
+static uint32_t get_script_variant_purpose(const script_variant_t variant)
+{
+    switch (variant) {
+    case P2PKH:
+        return BIP44_PURPOSE;
+    case P2WPKH:
+        return BIP84_PURPOSE;
+    case P2WPKH_P2SH:
+        return BIP49_PURPOSE;
+    case P2TR:
+        return BIP86_PURPOSE;
+    case MULTI_P2SH:
+        return BIP45_PURPOSE;
+    case MULTI_P2WSH:
+    case MULTI_P2WSH_P2SH:
+        return BIP48_PURPOSE;
+    default:
+        JADE_ASSERT(false); // Green or unhandled case
     }
 }
 
@@ -212,6 +240,8 @@ bool get_script_variant(const char* variant, const size_t variant_len, script_va
         *output = P2WPKH;
     } else if (strcmp(VARIANT_P2WPKH_P2SH, variant) == 0) {
         *output = P2WPKH_P2SH;
+    } else if (strcmp(VARIANT_P2TR, variant) == 0) {
+        *output = P2TR;
         // Multisig
     } else if (strcmp(VARIANT_MULTI_P2SH, variant) == 0) {
         *output = MULTI_P2SH;
@@ -243,6 +273,9 @@ bool get_singlesig_variant_from_script_type(const size_t script_type, script_var
     case WALLY_SCRIPT_TYPE_P2SH:
         *variant = P2WPKH_P2SH; // assumed
         return true;
+    case WALLY_SCRIPT_TYPE_P2TR:
+        *variant = P2TR;
+        return true;
     default:
         return false;
     }
@@ -252,7 +285,7 @@ bool is_greenaddress(const script_variant_t variant) { return variant == GREEN; 
 
 bool is_singlesig(const script_variant_t variant)
 {
-    return variant == P2PKH || variant == P2WPKH || variant == P2WPKH_P2SH;
+    return variant == P2PKH || variant == P2WPKH || variant == P2WPKH_P2SH || variant == P2TR;
 }
 
 bool is_multisig(const script_variant_t variant)
@@ -323,19 +356,14 @@ void wallet_get_default_xpub_export_path(
     JADE_ASSERT(path_len > 3);
     JADE_INIT_OUT_SIZE(written);
 
-    const bool multisig = is_multisig(variant);
-    if (multisig && variant == MULTI_P2SH) {
+    // 'Purpose' depends on script variant unless bip48 multisig
+    path[0] = get_script_variant_purpose(variant);
+
+    if (variant == MULTI_P2SH) {
         // Special case for sh(multi()) - use bip45 (m/45' only)
-        path[0] = BIP45_PURPOSE;
         *written = 1;
         return;
     }
-
-    // 'Purpose' depends on script variant unless bip48 multisig
-    path[0] = multisig           ? BIP48_PURPOSE
-        : variant == P2WPKH      ? BIP84_PURPOSE
-        : variant == P2WPKH_P2SH ? BIP49_PURPOSE
-                                 : BIP44_PURPOSE;
 
     // 'Coin-type' depends on network
     // FIXME: Handle liquid
@@ -343,14 +371,14 @@ void wallet_get_default_xpub_export_path(
 
     // 'Account' is as passed in
     path[2] = harden(account);
+    *written = 3;
 
-    if (multisig) {
+    if (is_multisig(variant)) {
         // bip48 script type flag
         const uint8_t bip48_script_type = variant == MULTI_P2WSH ? 2 : variant == MULTI_P2WSH_P2SH ? 1 : 0;
         path[3] = harden(bip48_script_type);
+        *written += 1;
     }
-
-    *written = multisig ? 4 : 3;
 }
 
 // Internal helper to get a derived private key - note 'output' should point to a buffer of size EC_PRIVATE_KEY_LEN
@@ -385,10 +413,7 @@ bool wallet_is_expected_singlesig_path(const char* network, const script_variant
         return false;
     }
 
-    const uint32_t expected_purpose = script_variant == P2WPKH ? BIP84_PURPOSE
-        : script_variant == P2WPKH_P2SH                        ? BIP49_PURPOSE
-                                                               : BIP44_PURPOSE;
-    if (path[0] != expected_purpose) {
+    if (path[0] != get_script_variant_purpose(script_variant)) {
         return false;
     }
 
@@ -659,26 +684,20 @@ static void wallet_build_csv(const char* network, const uint8_t* pubkeys, const 
 }
 
 // Function to build a green-address script - 2of2 or 2of3 multisig, or a 2of2 csv
-bool wallet_build_ga_script_ex(const char* network, const uint8_t* recovery_pubkey, const size_t recovery_pubkey_len,
-    const size_t csv_blocks, const uint32_t* path, const size_t path_len, uint8_t* output, const size_t output_len,
-    size_t* written)
+// Note only the pub_key member is required to be valid from passed ext_key structs.
+bool wallet_build_ga_script_ex(const char* network, const struct ext_key* user_key,
+    const struct ext_key* recovery_hdkey, const size_t csv_blocks, const uint32_t* path, const size_t path_len,
+    uint8_t* output, const size_t output_len, size_t* written)
 {
     JADE_ASSERT(keychain_get());
-    JADE_ASSERT(!recovery_pubkey_len || recovery_pubkey);
 
     if (!network || csv_blocks > MAX_CSV_BLOCKS_ALLOWED || !path || !path_len || !output
         || output_len < script_length_for_variant(GREEN) || !written) {
         return false;
     }
 
-    // We only support compressed pubkeys
-    if (recovery_pubkey_len && recovery_pubkey_len != EC_PUBLIC_KEY_LEN) {
-        JADE_LOGE("pubkey len %u not supported", recovery_pubkey_len);
-        return false;
-    }
-
     // We do not support 2of3-csv (ie. can't have csv blocks AND a recovery pubkey)
-    if (csv_blocks && recovery_pubkey_len) {
+    if (csv_blocks && recovery_hdkey) {
         JADE_LOGE("2of3-csv is not supported");
         return false;
     }
@@ -695,7 +714,7 @@ bool wallet_build_ga_script_ex(const char* network, const uint8_t* recovery_pubk
 
     // The GA and user pubkeys
     uint8_t pubkeys[3 * EC_PUBLIC_KEY_LEN]; // In case of 2of3
-    const size_t num_pubkeys = recovery_pubkey_len ? 3 : 2; // 2of3 if recovery-xpub
+    const size_t num_pubkeys = recovery_hdkey ? 3 : 2; // 2of3 if recovery-xpub
     uint8_t* next_pubkey = pubkeys;
 
     // Get the GA-key for the passed path (if valid)
@@ -705,23 +724,26 @@ bool wallet_build_ga_script_ex(const char* network, const uint8_t* recovery_pubk
         return false;
     }
     memcpy(next_pubkey, gakey.pub_key, sizeof(gakey.pub_key));
-    JADE_ASSERT(sizeof(gakey.pub_key) == EC_PUBLIC_KEY_LEN);
+    JADE_STATIC_ASSERT(sizeof(gakey.pub_key) == EC_PUBLIC_KEY_LEN);
     next_pubkey += sizeof(gakey.pub_key);
 
-    // Derive user pubkey from the path
-    struct ext_key derived;
-    if (!wallet_get_hdkey(path, path_len, BIP32_FLAG_KEY_PUBLIC | BIP32_FLAG_SKIP_HASH, &derived)) {
-        return false;
+    if (user_key) {
+        // Copy the already-derived user pubkey provided by the caller
+        memcpy(next_pubkey, user_key->pub_key, sizeof(user_key->pub_key));
+    } else {
+        // Derive the user pubkey from the path and copy it
+        struct ext_key derived;
+        if (!wallet_get_hdkey(path, path_len, BIP32_FLAG_KEY_PUBLIC | BIP32_FLAG_SKIP_HASH, &derived)) {
+            return false;
+        }
+        memcpy(next_pubkey, derived.pub_key, sizeof(derived.pub_key));
     }
-    memcpy(next_pubkey, derived.pub_key, sizeof(derived.pub_key));
-    JADE_ASSERT(sizeof(derived.pub_key) == EC_PUBLIC_KEY_LEN);
     next_pubkey += EC_PUBLIC_KEY_LEN;
 
     // Add recovery key also, if one passed
-    if (recovery_pubkey_len) {
+    if (recovery_hdkey) {
         JADE_ASSERT(num_pubkeys == 3);
-        JADE_ASSERT(recovery_pubkey_len == EC_PUBLIC_KEY_LEN);
-        memcpy(next_pubkey, recovery_pubkey, recovery_pubkey_len);
+        memcpy(next_pubkey, recovery_hdkey->pub_key, sizeof(recovery_hdkey->pub_key));
     }
 
     // Get 2of2 or 2of3, csv or multisig script, depending on params
@@ -750,36 +772,37 @@ bool wallet_build_ga_script(const char* network, const char* xpubrecovery, const
     }
 
     // Derive the recovery key, if one passed
-    uint8_t recovery_pubkey[EC_PUBLIC_KEY_LEN];
-    size_t recovery_pubkey_len = 0;
+    struct ext_key recovery_hdkey;
+    struct ext_key* recovery_p = xpubrecovery ? &recovery_hdkey : NULL;
     if (xpubrecovery) {
         // xpub includes branch, so only need to derive the final step (ptr)
-        struct ext_key key;
-        if (!wallet_derive_from_xpub(xpubrecovery, &path[path_len - 1], 1, BIP32_FLAG_SKIP_HASH, &key)) {
+        if (!wallet_derive_from_xpub(xpubrecovery, &path[path_len - 1], 1, BIP32_FLAG_SKIP_HASH, &recovery_hdkey)) {
             JADE_LOGE("Error trying to apply recovery key '%s'", xpubrecovery);
             return false;
         }
-        JADE_ASSERT(sizeof(recovery_pubkey) == sizeof(key.pub_key));
-
-        memcpy(recovery_pubkey, key.pub_key, sizeof(key.pub_key));
-        recovery_pubkey_len = sizeof(recovery_pubkey);
     }
 
     return wallet_build_ga_script_ex(
-        network, recovery_pubkey, recovery_pubkey_len, csv_blocks, path, path_len, output, output_len, written);
+        network, NULL, recovery_p, csv_blocks, path, path_len, output, output_len, written);
 }
 
-// Function to build a single-sig script - legacy-p2pkh, native segwit p2wpkh, or a p2sh-wrapped p2wpkh
-bool wallet_build_singlesig_script(const script_variant_t script_variant, const uint8_t* pubkey,
-    const size_t pubkey_len, uint8_t* output, const size_t output_len, size_t* written)
+// Function to build a single-sig script:
+// - legacy-p2pkh
+// - native segwit v0 p2wpkh
+// - p2sh-wrapped segwit v0 p2wpkh
+// - segwit v1 p2tr (keyspend only)
+bool wallet_build_singlesig_script(const script_variant_t script_variant, const struct ext_key* hdkey, uint8_t* output,
+    const size_t output_len, size_t* written)
 {
     JADE_ASSERT(keychain_get());
 
-    if (!is_singlesig(script_variant) || !pubkey || pubkey_len != EC_PUBLIC_KEY_LEN || !output
-        || output_len < script_length_for_variant(script_variant) || !written) {
+    if (!is_singlesig(script_variant) || !hdkey || !output || output_len < script_length_for_variant(script_variant)
+        || !written) {
         return false;
     }
 
+    const uint8_t* pubkey = hdkey->pub_key;
+    const size_t pubkey_len = sizeof(hdkey->pub_key);
     if (script_variant == P2WPKH_P2SH) {
         // Get the p2sh/p2wsh script-pubkey for the passed pubkey
         JADE_LOGD("Generating singlesig p2sh_p2wpkh script");
@@ -794,6 +817,11 @@ bool wallet_build_singlesig_script(const script_variant_t script_variant, const 
         JADE_LOGD("Generating singlesig p2pkh script");
         JADE_WALLY_VERIFY(
             wally_scriptpubkey_p2pkh_from_bytes(pubkey, pubkey_len, WALLY_SCRIPT_HASH160, output, output_len, written));
+    } else if (script_variant == P2TR) {
+        // Get a p2tr script-pubkey for the passed pubkey
+        // Wally will tweak the pubkey for us according to BIP-341
+        JADE_LOGD("Generating singlesig p2tr script");
+        JADE_WALLY_VERIFY(wally_scriptpubkey_p2tr_from_bytes(pubkey, pubkey_len, 0, output, output_len, written));
     } else {
         JADE_ASSERT_MSG(false, "Unrecognised script variant: %u", script_variant);
         return false;
@@ -821,8 +849,7 @@ bool wallet_search_for_singlesig_script(const script_variant_t script_variant, c
             bip32_key_from_parent(search_root, *index, BIP32_FLAG_KEY_PUBLIC | BIP32_FLAG_SKIP_HASH, &derived));
 
         size_t written = 0;
-        if (!wallet_build_singlesig_script(
-                script_variant, derived.pub_key, sizeof(derived.pub_key), generated, sizeof(generated), &written)) {
+        if (!wallet_build_singlesig_script(script_variant, &derived, generated, sizeof(generated), &written)) {
             JADE_LOGE("Error generating singlesig script");
             return false;
         }
@@ -1000,12 +1027,10 @@ bool wallet_get_signer_commitment(const uint8_t* signature_hash, const size_t si
 // NOTE: the standard EC signature will 'grind-r' to produce a 'low-r' signature, the anti-exfil case
 // cannot (as the entropy is provided explicitly). However all signatures produced are Low-S,
 // to comply with bitcoin standardness rules.
-bool wallet_sign_tx_input_hash(const uint8_t* signature_hash, const size_t signature_hash_len, const uint32_t* path,
-    const size_t path_len, const uint8_t sighash, const uint8_t* ae_host_entropy, const size_t ae_host_entropy_len,
-    uint8_t* output, const size_t output_len, size_t* written)
+bool wallet_sign_tx_input_hash(
+    signing_data_t* sig_data, const uint8_t* ae_host_entropy, const size_t ae_host_entropy_len)
 {
-    if (!signature_hash || signature_hash_len != SHA256_LEN || !path || path_len == 0 || sighash == 0 || !output
-        || output_len < EC_SIGNATURE_DER_MAX_LEN + 1 || !written) {
+    if (!sig_data || sig_data->path_len == 0) {
         return false;
     }
     if ((!ae_host_entropy && ae_host_entropy_len > 0)
@@ -1018,18 +1043,37 @@ bool wallet_sign_tx_input_hash(const uint8_t* signature_hash, const size_t signa
 
     // Derive the child key
     SENSITIVE_PUSH(privkey, sizeof(privkey));
-    wallet_get_privkey(path, path_len, privkey, sizeof(privkey));
+    wallet_get_privkey(sig_data->path, sig_data->path_len, privkey, sizeof(privkey));
 
     // Generate signature as appropriate
-    int wret;
-    if (ae_host_entropy) {
+    int wret = WALLY_OK;
+    if (ae_host_entropy && sig_data->sig_type != WALLY_SIGTYPE_SW_V1) {
         // Anti-Exfil signature
-        wret = wally_ae_sig_from_bytes(privkey, sizeof(privkey), signature_hash, signature_hash_len, ae_host_entropy,
-            ae_host_entropy_len, EC_FLAG_ECDSA, signature, sizeof(signature));
+        wret = wally_ae_sig_from_bytes(privkey, sizeof(privkey), sig_data->signature_hash,
+            sizeof(sig_data->signature_hash), ae_host_entropy, ae_host_entropy_len, EC_FLAG_ECDSA, signature,
+            sizeof(signature));
     } else {
-        // Standard EC signature
-        wret = wally_ec_sig_from_bytes(privkey, sizeof(privkey), signature_hash, signature_hash_len,
-            EC_FLAG_ECDSA | EC_FLAG_GRIND_R, signature, sizeof(signature));
+        // Standard EC or taproot signature
+        uint8_t tweaked[EC_PRIVATE_KEY_LEN];
+        uint8_t* signing_key;
+        uint32_t flags;
+        SENSITIVE_PUSH(tweaked, sizeof(tweaked));
+
+        if (sig_data->sig_type != WALLY_SIGTYPE_SW_V1) {
+            // ECDSA. Sign directly with the private key
+            signing_key = privkey;
+            flags = EC_FLAG_ECDSA | EC_FLAG_GRIND_R;
+        } else {
+            // Taproot. Tweak the private key before Schnorr signing
+            signing_key = tweaked;
+            flags = EC_FLAG_SCHNORR;
+            wret = wally_ec_private_key_bip341_tweak(privkey, sizeof(privkey), NULL, 0, 0, tweaked, sizeof(tweaked));
+        }
+        if (wret == WALLY_OK) {
+            wret = wally_ec_sig_from_bytes(signing_key, EC_PRIVATE_KEY_LEN, sig_data->signature_hash,
+                sizeof(sig_data->signature_hash), flags, signature, sizeof(signature));
+        }
+        SENSITIVE_POP(tweaked);
     }
     SENSITIVE_POP(privkey);
 
@@ -1038,38 +1082,53 @@ bool wallet_sign_tx_input_hash(const uint8_t* signature_hash, const size_t signa
         return false;
     }
 
-    // Make the signature in DER format
-    JADE_WALLY_VERIFY(wally_ec_sig_to_der(signature, sizeof(signature), output, output_len - 1, written));
-    JADE_ASSERT(*written <= output_len - 1);
+    if (sig_data->sig_type != WALLY_SIGTYPE_SW_V1) {
+        // ECDSA: DER-encode the signature
+        JADE_WALLY_VERIFY(wally_ec_sig_to_der(
+            signature, sizeof(signature), sig_data->sig, sizeof(sig_data->sig) - 1, &sig_data->sig_len));
+    } else {
+        // Taproot: Copy the Schnorr signature as-is.
+        sig_data->sig_len = sizeof(signature);
+        memcpy(sig_data->sig, signature, sizeof(signature));
+        if (sig_data->sighash == WALLY_SIGHASH_DEFAULT) {
+            // We don't add the sighash byte for default signatures, so we are done
+            return true;
+        }
+    }
 
     // Append the sighash used
-    output[*written] = sighash;
-    *written += 1;
+    JADE_ASSERT(sig_data->sig_len <= sizeof(sig_data->sig) - 1);
+    sig_data->sig[sig_data->sig_len] = sig_data->sighash;
+    sig_data->sig_len += 1;
 
     return true;
 }
 
-// Function to fetch a hash for a transaction input - output buffer should be of size SHA256_LEN
-bool wallet_get_tx_input_hash(struct wally_tx* tx, const size_t index, const bool is_witness, const uint8_t* script,
-    const size_t script_len, const uint64_t satoshi, const uint8_t sighash, uint8_t* output, const size_t output_len)
+// Function to fetch a hash for signing a transaction input
+bool wallet_get_tx_input_hash(struct wally_tx* tx, const size_t index, signing_data_t* sig_data, const uint8_t* script,
+    size_t script_len, const struct wally_map* amounts, const struct wally_map* scriptpubkeys, struct wally_map* cache)
 {
-    if (!tx || !script || script_len == 0 || sighash == 0 || !output || output_len != SHA256_LEN) {
-        return false;
-    }
+    struct wally_map* assets = NULL;
+    const uint32_t key_version = 0;
+    const uint32_t codesep = WALLY_NO_CODESEPARATOR;
+    const uint8_t *annex = NULL, *genesis = NULL;
+    const size_t annex_len = 0, genesis_len = 0;
+    int wret;
 
-    // Generate the btc signature hash to sign
-    const size_t hash_flags = is_witness ? WALLY_TX_FLAG_USE_WITNESS : 0;
-    const int wret = wally_tx_get_btc_signature_hash(
-        tx, index, script, script_len, satoshi, sighash, hash_flags, output, output_len);
+    JADE_ASSERT(sig_data);
+    wret = wally_tx_get_input_signature_hash(tx, index, scriptpubkeys, assets, amounts, script, script_len, key_version,
+        codesep, annex, annex_len, genesis, genesis_len, sig_data->sighash, sig_data->sig_type, cache,
+        sig_data->signature_hash, sizeof(sig_data->signature_hash));
+
     if (wret != WALLY_OK) {
-        JADE_LOGE("Failed to get btc signature hash, error %d", wret);
+        JADE_LOGE("Failed to get btc signature hash for segwit version %d, error %d", (int)sig_data->sig_type, wret);
         return false;
     }
     return true;
 }
 
 // Function to fetch a hash for an elements input - output buffer should be of size SHA256_LEN
-bool wallet_get_elements_tx_input_hash(struct wally_tx* tx, const size_t index, const bool is_witness,
+bool wallet_get_elements_tx_input_hash(struct wally_tx* tx, const size_t index, const uint32_t sig_type,
     const uint8_t* script, const size_t script_len, const uint8_t* satoshi, const size_t satoshi_len,
     const uint8_t sighash, uint8_t* output, const size_t output_len)
 {
@@ -1077,8 +1136,14 @@ bool wallet_get_elements_tx_input_hash(struct wally_tx* tx, const size_t index, 
         return false;
     }
 
+    if (sig_type == WALLY_SIGTYPE_SW_V1) {
+        // TODO: Implement
+        JADE_LOGE("Unsupported segwit version v1");
+        return false;
+    }
+
     // Generate the elements signature hash to sign
-    const size_t hash_flags = is_witness ? WALLY_TX_FLAG_USE_WITNESS : 0;
+    const size_t hash_flags = sig_type == WALLY_SIGTYPE_SW_V0 ? WALLY_TX_FLAG_USE_WITNESS : 0;
     const int wret = wally_tx_get_elements_signature_hash(
         tx, index, script, script_len, satoshi, satoshi_len, sighash, hash_flags, output, output_len);
     if (wret != WALLY_OK) {
@@ -1299,8 +1364,8 @@ bool wallet_sign_message_hash(const uint8_t* signature_hash, const size_t signat
     const size_t path_len, const uint8_t* ae_host_entropy, const size_t ae_host_entropy_len, uint8_t* output,
     const size_t output_len, size_t* written)
 {
-    if (!path || !signature_hash || signature_hash_len != SHA256_LEN || !output || output_len < EC_SIGNATURE_LEN * 2
-        || !written) {
+    if (!path || !path_len || !signature_hash || signature_hash_len != SHA256_LEN || !output
+        || output_len < EC_SIGNATURE_LEN * 2 || !written) {
         return false;
     }
     if ((!ae_host_entropy && ae_host_entropy_len > 0)

@@ -11,7 +11,7 @@
 // 1 - 0.1.31 - include the 'sorted' flag
 // 2 - 0.1.34 - include any liquid master blinding key
 // 3 - 1.0.22 - persist all metadata so can recreate original input
-static const uint8_t CURRENT_RECORD_VERSION = 3;
+static const uint8_t CURRENT_MULTISIG_RECORD_VERSION = 3;
 
 // The smallest valid multisig record, for sanity checking
 // version 1, 1of1  (moving to v1 predated allowing just 1 signer)
@@ -32,8 +32,8 @@ bool multisig_data_to_bytes(const script_variant_t variant, const bool sorted, c
 
     // Version byte
     uint8_t* write_ptr = output_bytes;
-    memcpy(write_ptr, &CURRENT_RECORD_VERSION, sizeof(CURRENT_RECORD_VERSION));
-    write_ptr += sizeof(CURRENT_RECORD_VERSION);
+    memcpy(write_ptr, &CURRENT_MULTISIG_RECORD_VERSION, sizeof(CURRENT_MULTISIG_RECORD_VERSION));
+    write_ptr += sizeof(CURRENT_MULTISIG_RECORD_VERSION);
 
     // Script variant
     const uint8_t variant_byte = (uint8_t)variant;
@@ -301,7 +301,7 @@ bool multisig_data_from_bytes(const uint8_t* bytes, const size_t bytes_len, mult
     // Version byte
     const uint8_t* read_ptr = bytes;
     const uint8_t version = *read_ptr;
-    if (version > CURRENT_RECORD_VERSION) {
+    if (version > CURRENT_MULTISIG_RECORD_VERSION) {
         JADE_LOGE("Bad version byte in stored registered multisig data");
         return false;
     }
@@ -543,7 +543,7 @@ void multisig_get_valid_record_names(
 
     // Load description of each - remove ones that are not valid for this wallet or passed script type
     size_t written = 0;
-    for (int i = 0; i < num_multisigs; ++i) {
+    for (size_t i = 0; i < num_multisigs; ++i) {
         const char* errmsg = NULL;
         multisig_data_t multisig_data;
         if (multisig_load_from_storage(names[i], &multisig_data, NULL, 0, NULL, &errmsg)

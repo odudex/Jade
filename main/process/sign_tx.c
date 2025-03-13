@@ -11,12 +11,14 @@
 #include "../utils/event.h"
 #include "../utils/malloc_ext.h"
 #include "../utils/network.h"
+#include "../utils/wally_ext.h"
 #include "../wallet.h"
 
 #include <inttypes.h>
 #include <sodium/utils.h>
 
 #include <wally_anti_exfil.h>
+#include <wally_map.h>
 #include <wally_script.h>
 
 #include "process_utils.h"
@@ -24,8 +26,6 @@
 bool show_btc_transaction_outputs_activity(
     const char* network, const struct wally_tx* tx, const output_info_t* output_info);
 bool show_btc_final_confirmation_activity(uint64_t fee, const char* warning_msg);
-
-static void wally_free_tx_wrapper(void* tx) { JADE_WALLY_VERIFY(wally_tx_free((struct wally_tx*)tx)); }
 
 // Can optionally be passed paths for change outputs, which we verify internally
 bool validate_wallet_outputs(jade_process_t* process, const char* network, const struct wally_tx* tx,
@@ -192,8 +192,8 @@ bool validate_wallet_outputs(jade_process_t* process, const char* network, const
                     // Derive user pubkey from the path
                     struct ext_key derived;
                     if (!wallet_get_hdkey(path, path_len, BIP32_FLAG_KEY_PUBLIC | BIP32_FLAG_SKIP_HASH, &derived)
-                        || !wallet_build_singlesig_script(script_variant, derived.pub_key, sizeof(derived.pub_key),
-                            script, sizeof(script), &script_len)) {
+                        || !wallet_build_singlesig_script(
+                            script_variant, &derived, script, sizeof(script), &script_len)) {
                         JADE_LOGE("Output %u path/script failed to construct", i);
                         *errmsg = "Receive script cannot be constructed";
                         return false;
@@ -300,20 +300,26 @@ void send_ae_signature_replies(jade_process_t* process, signing_data_t* all_sign
             // We are expecting to generate a signature for this input
             GET_MSG_PARAMS(process);
 
-            size_t ae_host_entropy_len = 0;
             const uint8_t* ae_host_entropy = NULL;
-            rpc_get_bytes_ptr("ae_host_entropy", &params, &ae_host_entropy, &ae_host_entropy_len);
+            size_t ae_host_entropy_len = 0;
 
-            if (!ae_host_entropy || ae_host_entropy_len != WALLY_S2C_DATA_LEN) {
+            // Fetch any host entropy to include in the signature.
+            rpc_get_bytes_ptr("ae_host_entropy", &params, &ae_host_entropy, &ae_host_entropy_len);
+            if (ae_host_entropy_len && ae_host_entropy_len != WALLY_S2C_DATA_LEN) {
                 jade_process_reject_message(
-                    process, CBOR_RPC_BAD_PARAMETERS, "Failed to extract host entropy from parameters", NULL);
+                    process, CBOR_RPC_PROTOCOL_ERROR, "Failed to extract valid host entropy from parameters", NULL);
+                goto cleanup;
+            }
+            const bool use_ae = ae_host_entropy_len != 0;
+            if (sig_data->use_ae != use_ae) {
+                // We must be given both a commitment and entropy, or neither.
+                jade_process_reject_message(process, CBOR_RPC_PROTOCOL_ERROR,
+                    "Failed to extract valid host commitment and entropy from parameters", NULL);
                 goto cleanup;
             }
 
-            // Generate Anti-Exfil signature
-            if (!wallet_sign_tx_input_hash(sig_data->signature_hash, sizeof(sig_data->signature_hash), sig_data->path,
-                    sig_data->path_len, sig_data->sighash, ae_host_entropy, ae_host_entropy_len, sig_data->sig,
-                    sizeof(sig_data->sig), &sig_data->sig_len)) {
+            // Generate Anti-Exfil, non-AE ECDSA or non-AE Schnorr signature
+            if (!wallet_sign_tx_input_hash(sig_data, ae_host_entropy, ae_host_entropy_len)) {
                 jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Failed to sign tx input", NULL);
                 goto cleanup;
             }
@@ -343,9 +349,7 @@ void send_ec_signature_replies(
         signing_data_t* const sig_data = all_signing_data + i;
         if (sig_data->path_len > 0) {
             // Generate EC signature
-            if (!wallet_sign_tx_input_hash(sig_data->signature_hash, sizeof(sig_data->signature_hash), sig_data->path,
-                    sig_data->path_len, sig_data->sighash, NULL, 0, sig_data->sig, sizeof(sig_data->sig),
-                    &sig_data->sig_len)) {
+            if (!wallet_sign_tx_input_hash(sig_data, NULL, 0)) {
                 jade_process_reject_message_with_id(sig_data->id, CBOR_RPC_INTERNAL_ERROR, "Failed to sign tx input",
                     NULL, 0, msgbuf, sizeof(msgbuf), source);
                 goto cleanup;
@@ -365,6 +369,16 @@ void send_ec_signature_replies(
 
 cleanup:
     SENSITIVE_POP(all_signing_data);
+}
+
+// Whether or not a sighash type is valid for BTC.
+// NOTE: atm we only accept 'SIGHASH_ALL', or SIGHASH_DEFAULT for p2tr
+static bool is_valid_btc_sig_type(const signing_data_t* const sig_data)
+{
+    if (sig_data->sig_type == WALLY_SIGTYPE_SW_V1) {
+        return sig_data->sighash == WALLY_SIGHASH_DEFAULT || sig_data->sighash == WALLY_SIGHASH_ALL;
+    }
+    return sig_data->sighash == WALLY_SIGHASH_ALL;
 }
 
 /*
@@ -413,7 +427,7 @@ void sign_tx_process(void* process_ptr)
         jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to extract tx from passed bytes", NULL);
         goto cleanup;
     }
-    jade_process_call_on_exit(process, wally_free_tx_wrapper, tx);
+    jade_process_call_on_exit(process, jade_wally_free_tx_wrapper, tx);
 
     // copy the amount
     size_t num_inputs = 0;
@@ -473,6 +487,21 @@ void sign_tx_process(void* process_ptr)
     signing_data_t* const all_signing_data = JADE_CALLOC(num_inputs, sizeof(signing_data_t));
     jade_process_free_on_exit(process, all_signing_data);
 
+    // Hold input scriptpubkeys/amounts in a map keyed by input index
+    // (this is how wally wants them).
+    struct wally_map* scriptpubkeys;
+    JADE_WALLY_VERIFY(wally_map_init_alloc(num_inputs, NULL, &scriptpubkeys));
+    jade_process_call_on_exit(process, jade_wally_free_map_wrapper, scriptpubkeys);
+
+    struct wally_map* amounts;
+    JADE_WALLY_VERIFY(wally_map_init_alloc(num_inputs, NULL, &amounts));
+    jade_process_call_on_exit(process, jade_wally_free_map_wrapper, amounts);
+
+    struct wally_map* cache;
+    // FIXME: Use a wally constant for the cache size when it is exposed
+    JADE_WALLY_VERIFY(wally_map_init_alloc(16, NULL, &cache));
+    jade_process_call_on_exit(process, jade_wally_free_map_wrapper, cache);
+
     // We track if the type of the inputs we are signing changes (ie. single-sig vs
     // green/multisig/other) so we can show a warning to the user if so.
     script_flavour_t aggregate_inputs_scripts_flavour = SCRIPT_FLAVOUR_NONE;
@@ -480,9 +509,10 @@ void sign_tx_process(void* process_ptr)
     // Run through each input message and generate a signature-hash for each one
     uint64_t input_amount = 0;
 
-    // NOTE: atm we only accept 'SIGHASH_ALL' for inputs we are signing
-    const uint8_t expected_sighash = WALLY_SIGHASH_ALL;
-    bool signing = false;
+    uint32_t num_to_sign = 0; // Total number of inputs to sign
+    uint32_t num_p2tr_to_sign = 0; // Total number of p2tr inputs to sign
+
+    // Loop to fetch data for and validate all inputs
     for (size_t index = 0; index < num_inputs; ++index) {
         jade_process_load_in_message(process, true);
         if (!IS_CURRENT_MESSAGE(process, "tx_input")) {
@@ -495,10 +525,8 @@ void sign_tx_process(void* process_ptr)
         // txn input as expected - get input parameters
         GET_MSG_PARAMS(process);
 
-        bool is_witness = false;
         size_t script_len = 0;
         const uint8_t* script = NULL;
-        uint64_t input_satoshi = 0;
 
         // The ae commitments for this input (if using anti-exfil signatures)
         size_t ae_host_commitment_len = 0;
@@ -518,23 +546,27 @@ void sign_tx_process(void* process_ptr)
         // (But if passed must be valid - empty/root path is not allowed for signing)
         const bool has_path = rpc_has_field_data("path", &params);
         if (has_path) {
-            signing = true;
+            num_to_sign += 1;
 
             // Get all common tx-signing input fields which must be present if a path is given
-            if (!params_tx_input_signing_data(use_ae_signatures, &params, &is_witness, sig_data, &ae_host_commitment,
+            if (!params_tx_input_signing_data(use_ae_signatures, &params, sig_data, &ae_host_commitment,
                     &ae_host_commitment_len, &script, &script_len, &aggregate_inputs_scripts_flavour, &errmsg)) {
                 jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, errmsg, NULL);
                 goto cleanup;
             }
-
-            // NOTE: atm we only accept 'SIGHASH_ALL'
-            if (sig_data->sighash != expected_sighash) {
+            if (!is_valid_btc_sig_type(sig_data)) {
                 jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Unsupported sighash value", NULL);
                 goto cleanup;
             }
+            if (sig_data->sig_type == WALLY_SIGTYPE_SW_V1) {
+                num_p2tr_to_sign += 1;
+            }
         } else {
             // May still need witness flag
+            bool is_witness = false;
             rpc_get_boolean("is_witness", &params, &is_witness);
+            sig_data->sig_type = is_witness ? WALLY_SIGTYPE_SW_V0 : WALLY_SIGTYPE_PRE_SW;
+            sig_data->sighash = WALLY_SIGHASH_ALL;
         }
 
         // Full input tx can be omitted for transactions with only one single witness
@@ -577,45 +609,76 @@ void sign_tx_process(void* process_ptr)
                 goto cleanup;
             }
 
-            // Fetch the amount from the txn
-            input_satoshi = input_tx->outputs[tx->inputs[index].index].satoshi;
+            // Fetch the amount and scriptpubkey from the passed input tx
+            const struct wally_tx_output* const txout = &input_tx->outputs[tx->inputs[index].index];
+            res = wally_map_add_integer(scriptpubkeys, index, txout->script, txout->script_len);
+            if (res == WALLY_OK) {
+                res = wally_map_add_integer(amounts, index, (uint8_t*)&txout->satoshi, sizeof(uint64_t));
+                // Keep a running total
+                input_amount += txout->satoshi;
+            }
+            if (res != WALLY_OK) {
+                jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to extract prevout", NULL);
+                JADE_WALLY_VERIFY(wally_tx_free(input_tx));
+                goto cleanup;
+            }
 
             // Free the (potentially large) txn immediately
             JADE_WALLY_VERIFY(wally_tx_free(input_tx));
         } else {
-            if (!is_witness || num_inputs > 1) {
+            // For single segwit v0 inputs we can instead get just the amount
+            // directly from message. This optimization is deprecated and will
+            // be removed in a future firmware release.
+            if (sig_data->sig_type != WALLY_SIGTYPE_SW_V0 || num_inputs > 1) {
                 jade_process_reject_message(
                     process, CBOR_RPC_BAD_PARAMETERS, "Failed to extract input_tx from parameters", NULL);
                 goto cleanup;
             }
 
-            // For single segwit input we can instead get just the amount directly from message
             JADE_LOGD("Single witness input - using explicitly passed amount");
 
             // Get the amount
-            ret = rpc_get_uint64_t("satoshi", &params, &input_satoshi);
-            if (!ret) {
+            uint64_t satoshi;
+            if (!rpc_get_uint64_t("satoshi", &params, &satoshi)) {
+                res = WALLY_EINVAL;
+            } else {
+                res = wally_map_add_integer(amounts, index, (uint8_t*)&satoshi, sizeof(uint64_t));
+                // Keep a running total
+                input_amount += satoshi;
+            }
+            if (res != WALLY_OK) {
                 jade_process_reject_message(
                     process, CBOR_RPC_BAD_PARAMETERS, "Failed to extract satoshi from parameters", NULL);
                 goto cleanup;
             }
         }
 
-        // Make signature if given a path (should have a prevout script in hand)
-        if (has_path) {
-            // Generate hash of this input which we will sign later
-            JADE_ASSERT(sig_data->sighash == WALLY_SIGHASH_ALL);
+        bool made_ae_commitment = false;
 
-            if (!wallet_get_tx_input_hash(tx, index, is_witness, script, script_len, input_satoshi, sig_data->sighash,
-                    sig_data->signature_hash, sizeof(sig_data->signature_hash))) {
+        if (has_path && sig_data->sig_type == WALLY_SIGTYPE_SW_V1) {
+            // We have been given a path, so are expected to sign this input.
+            // We can't compute a taproot signature hash until we have all
+            // values and scriptpubkeys - do nothing here and do taproot
+            // processing below after this initial loop instead.
+            // Taproot Schnorr signatures do not support Anti-Exfil, so we
+            // skip creating a signer commitment here as well.
+            if (!use_ae_signatures) {
+                jade_process_reject_message(
+                    process, CBOR_RPC_INTERNAL_ERROR, "Taproot signing requires Anti-exfil flow", NULL);
+                goto cleanup;
+            }
+        } else if (has_path) {
+            // We have been given a path, so are expected to sign this input.
+            // Generate the signature hash of this input which we will sign later
+            if (!wallet_get_tx_input_hash(tx, index, sig_data, script, script_len, amounts, scriptpubkeys, cache)) {
                 jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Failed to make tx input hash", NULL);
                 goto cleanup;
             }
 
-            // If using anti-exfil signatures, compute signer commitment for returning to caller
-            if (use_ae_signatures) {
+            // If using anti-exfil signatures for this input,
+            // compute signer commitment for returning to caller
+            if (sig_data->use_ae) {
                 JADE_ASSERT(ae_host_commitment);
-                JADE_ASSERT(ae_host_commitment_len == WALLY_HOST_COMMITMENT_LEN);
                 if (!wallet_get_signer_commitment(sig_data->signature_hash, sizeof(sig_data->signature_hash),
                         sig_data->path, sig_data->path_len, ae_host_commitment, ae_host_commitment_len,
                         ae_signer_commitment, sizeof(ae_signer_commitment))) {
@@ -623,6 +686,7 @@ void sign_tx_process(void* process_ptr)
                         process, CBOR_RPC_INTERNAL_ERROR, "Failed to make ae signer commitment", NULL);
                     goto cleanup;
                 }
+                made_ae_commitment = true;
             }
         } else {
             // Empty byte-string reply (no path given implies no sig needed or expected)
@@ -631,8 +695,7 @@ void sign_tx_process(void* process_ptr)
             JADE_ASSERT(sig_data->path_len == 0);
         }
 
-        // Keep a running total
-        input_amount += input_satoshi;
+        // Check/log a running total
         if (input_amount > UINT32_MAX) {
             JADE_LOGD("input_amount over UINT32_MAX, truncated low = %" PRIu32 " high %" PRIu32, (uint32_t)input_amount,
                 (uint32_t)(input_amount >> 32));
@@ -640,13 +703,30 @@ void sign_tx_process(void* process_ptr)
             JADE_LOGD("input_amount = %" PRIu32, (uint32_t)input_amount);
         }
 
-        // If using ae-signatures, reply with the signer commitment
+        // If using ae-signatures, reply with the (possibly empty) signer commitment
         // FIXME: change message flow to reply here even when not using ae-signatures
         // as this simplifies the code both here and in the client.
         if (use_ae_signatures) {
             uint8_t buffer[256];
-            jade_process_reply_to_message_bytes(process->ctx, ae_signer_commitment,
-                has_path ? sizeof(ae_signer_commitment) : 0, buffer, sizeof(buffer));
+            const size_t commitment_len = made_ae_commitment ? sizeof(ae_signer_commitment) : 0;
+            jade_process_reply_to_message_bytes(
+                process->ctx, ae_signer_commitment, commitment_len, buffer, sizeof(buffer));
+        }
+    }
+
+    // Loop to process any taproot inputs now that we have all input
+    // amounts and scriptpubkeys
+    for (size_t index = 0; num_p2tr_to_sign != 0 && index < num_inputs; ++index) {
+        signing_data_t* const sig_data = all_signing_data + index;
+        if (sig_data->sig_type != WALLY_SIGTYPE_SW_V1 || !sig_data->path_len) {
+            // Not signing this input
+            continue;
+        }
+        if (!wallet_get_tx_input_hash(tx, index, sig_data, NULL, 0, amounts, scriptpubkeys, cache)) {
+            // We are using ae-signatures, so we need to load the message to send the error back on
+            jade_process_load_in_message(process, true);
+            jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Failed to make taproot tx input hash", NULL);
+            goto cleanup;
         }
     }
 
@@ -679,7 +759,7 @@ void sign_tx_process(void* process_ptr)
     JADE_LOGD("User accepted fee");
 
     // Show warning if nothing to sign
-    if (!signing) {
+    if (num_to_sign == 0) {
         const char* message[] = { "There are no relevant", "inputs to be signed" };
         await_message_activity(message, 2);
     }

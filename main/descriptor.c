@@ -17,16 +17,16 @@ struct ext_key;
 #include <sodium/utils.h>
 
 // 0 - 1.0.22 - version, type, length, script, map-values, hmac
-static const uint8_t CURRENT_RECORD_VERSION = 0;
+static const uint8_t CURRENT_DESCRIPTOR_RECORD_VERSION = 0;
 
 // The smallest valid descriptor record, for sanity checking
 // v0, no map values, assuming min script len 4(?)
 #define MIN_DESCRIPTOR_BYTES_LEN (2 + 2 + 4 + 1 + 0 + 0)
 
 // Stack size required for miniscript parsing.
-// Allow 1k, plus 1k per 'depth' level, plus 4k for handling the
+// Allow 2k, plus 1k per 'depth' level, plus 4k for handling the
 // public keys which are expected to be at the end of most branches.
-#define DESCRIPTOR_PARSE_STACK_SIZE(depth) ((depth + 5) * 1024)
+#define DESCRIPTOR_PARSE_STACK_SIZE(depth) ((depth + 6) * 1024)
 
 // We reject generating addresses from descriptors more than a certain depth, as this process
 // is recursive and so can use unbounded amounts of stack.  This protects us against a badly-
@@ -251,11 +251,7 @@ static bool parse_descriptor(const char* name, const descriptor_data_t* descript
         *errmsg = "Descriptors with private keys are not supported";
         goto fail;
     }
-    if (features & WALLY_MS_IS_X_ONLY) {
-        JADE_LOGE("Descriptor '%s' appears to contain x-only keys (taproot?)", name);
-        *errmsg = "Descriptors with x-only keys are not supported";
-        goto fail;
-    }
+
     if (!(features & WALLY_MS_IS_RANGED)) {
         JADE_LOGE("Descriptor '%s' appears not to contain any wildcards", name);
         *errmsg = "Descriptors without any wildcards are not supported";
@@ -329,9 +325,7 @@ bool descriptor_get_signers(const char* name, const descriptor_data_t* descripto
             *errmsg = "Failed to get key features";
             goto cleanup;
         }
-        if ((key_features
-                & (WALLY_MS_IS_PRIVATE | WALLY_MS_IS_UNCOMPRESSED | WALLY_MS_IS_RAW | WALLY_MS_IS_X_ONLY
-                    | WALLY_MS_IS_PARENTED))
+        if ((key_features & (WALLY_MS_IS_PRIVATE | WALLY_MS_IS_UNCOMPRESSED | WALLY_MS_IS_RAW | WALLY_MS_IS_PARENTED))
             != WALLY_MS_IS_PARENTED) {
             *errmsg = "Invalid key features";
             goto cleanup;
@@ -540,12 +534,12 @@ bool descriptor_to_bytes(descriptor_data_t* descriptor, uint8_t* output_bytes, c
     JADE_ASSERT(output_len == DESCRIPTOR_BYTES_LEN(descriptor));
 
     JADE_ASSERT(descriptor->script_len);
-    JADE_ASSERT(descriptor->values || !descriptor->num_values);
+    JADE_ASSERT(descriptor->num_values <= sizeof(descriptor->values) / sizeof(descriptor->values[0]));
 
     // Version byte
     uint8_t* write_ptr = output_bytes;
-    memcpy(write_ptr, &CURRENT_RECORD_VERSION, sizeof(CURRENT_RECORD_VERSION));
-    write_ptr += sizeof(CURRENT_RECORD_VERSION);
+    memcpy(write_ptr, &CURRENT_DESCRIPTOR_RECORD_VERSION, sizeof(CURRENT_DESCRIPTOR_RECORD_VERSION));
+    write_ptr += sizeof(CURRENT_DESCRIPTOR_RECORD_VERSION);
 
     // Descriptor type
     const uint8_t type_byte = (uint8_t)descriptor->type;
@@ -598,7 +592,7 @@ bool descriptor_from_bytes(const uint8_t* bytes, const size_t bytes_len, descrip
     // Version byte
     const uint8_t* read_ptr = bytes;
     const uint8_t version = *read_ptr;
-    if (version > CURRENT_RECORD_VERSION) {
+    if (version > CURRENT_DESCRIPTOR_RECORD_VERSION) {
         JADE_LOGE("Bad version byte in stored registered descriptor data");
         return false;
     }
@@ -704,7 +698,7 @@ void descriptor_get_valid_record_names(
 
     // Load description of each - remove ones that are not valid for this wallet
     size_t written = 0;
-    for (int i = 0; i < num_descriptors; ++i) {
+    for (size_t i = 0; i < num_descriptors; ++i) {
         const char* errmsg = NULL;
         descriptor_data_t descriptor_data;
         if (descriptor_load_from_storage(names[i], &descriptor_data, &errmsg)) {

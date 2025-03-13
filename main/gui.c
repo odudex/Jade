@@ -7,6 +7,7 @@
 
 #include "display.h"
 
+#include "ble/ble.h"
 #include "gui.h"
 #include "idletimer.h"
 #include "jade_assert.h"
@@ -18,10 +19,6 @@
 #include "storage.h"
 #include "utils/event.h"
 #include "utils/malloc_ext.h"
-
-#ifdef CONFIG_BT_ENABLED
-#include "ble/ble.h"
-#endif
 
 // A genuine production v2 Jade may be awaiting mandatory attestation data
 #if defined(CONFIG_BOARD_TYPE_JADE_V2) && defined(CONFIG_SECURE_BOOT)                                                  \
@@ -110,6 +107,8 @@ extern const uint8_t statusbar_logo_end[] asm("_binary_statusbar_large_bin_gz_en
 extern const uint8_t statusbar_logo_start[] asm("_binary_statusbar_small_bin_gz_start");
 extern const uint8_t statusbar_logo_end[] asm("_binary_statusbar_small_bin_gz_end");
 #endif
+
+static void free_view_node(gui_view_node_t* node);
 
 static void make_status_bar(void)
 {
@@ -309,47 +308,16 @@ static void set_tree_active(gui_view_node_t* node, bool value)
 }
 
 // Function to set the passed node as active or inactive, depending on 'value'.
-// Returns true if the node was found and marked active or inactive as requested.
-// Returns false if node not found or if it would deactivate the only active node,
-// in which case no 'active' nodes are changed.
-bool gui_set_active(gui_activity_t* activity, gui_view_node_t* node, bool value)
+void gui_set_active(gui_view_node_t* node, const bool value)
 {
-    JADE_ASSERT(activity);
     JADE_ASSERT(node);
 
-    // TODO: make sure that `node` is part of `activity`
-
-    if (value) {
-        // Set passed node to active
-        set_tree_active(node, true);
-        gui_repaint(node);
-        return true;
-    }
-
-    // Check other active nodes exist
-    selectable_t* const begin = activity->selectables;
-    if (!begin) {
-        return false;
-    }
-
-    bool other_active_nodes_exist = false;
-    selectable_t* current = begin;
-    do {
-        other_active_nodes_exist = current->node != node && current->node->is_active;
-        current = current->next;
-    } while (current != begin && !other_active_nodes_exist);
-
-    // no other active nodes, we can't de-activate it
-    if (!other_active_nodes_exist) {
-        return false;
-    }
-
-    set_tree_active(node, false);
+    // Set passed node to active/inactive and redraw
+    set_tree_active(node, value);
     gui_repaint(node);
-    return true;
 }
 
-static gui_view_node_t* gui_get_first_active_node(gui_activity_t* activity)
+static gui_view_node_t* get_first_active_node(gui_activity_t* activity)
 {
     JADE_ASSERT(activity);
 
@@ -371,7 +339,7 @@ static gui_view_node_t* gui_get_first_active_node(gui_activity_t* activity)
 // select the previous item in the selectables list
 // Returns true if the selection is 'moved' to a prior item, or false if not (and selection left unchanged)
 // eg. no current item selected, no other selectable items, no prior selectable items [and not wrapping] etc.
-static bool gui_select_prev(gui_activity_t* activity)
+static bool select_prev(gui_activity_t* activity)
 {
     JADE_ASSERT(activity);
 
@@ -423,12 +391,12 @@ static bool gui_select_prev(gui_activity_t* activity)
     return true;
 }
 
-// Note: node must exist and be part of passed activity.
+// Note: node must exist and be active/selectable.
 // Any prior selection will be cleared.
-void gui_select_node(gui_activity_t* activity, gui_view_node_t* node)
+static void select_node(gui_view_node_t* node)
 {
-    JADE_ASSERT(activity);
     JADE_ASSERT(node);
+    JADE_ASSERT(node->activity);
     JADE_ASSERT(node->is_active);
 
     // If there are no selectables, it (probably) means the gui element
@@ -436,12 +404,12 @@ void gui_select_node(gui_activity_t* activity, gui_view_node_t* node)
     // In this case we mark the node as the one to initially select when
     // the activity is drawn for the first time, rather than trying to
     // set the selection immediately.
-    if (!activity->selectables) {
-        gui_set_activity_initial_selection(activity, node);
+    if (!node->activity->selectables) {
+        gui_set_activity_initial_selection(node);
         return;
     }
 
-    selectable_t* const begin = activity->selectables;
+    selectable_t* const begin = node->activity->selectables;
     selectable_t* current = begin;
 
     selectable_t* old_selected = NULL;
@@ -449,6 +417,7 @@ void gui_select_node(gui_activity_t* activity, gui_view_node_t* node)
 
     // look for both the selected node and `node`
     do {
+        JADE_ASSERT(current->node->activity == node->activity);
         if (current->node->is_selected) {
             old_selected = current;
         }
@@ -458,8 +427,9 @@ void gui_select_node(gui_activity_t* activity, gui_view_node_t* node)
         current = current->next;
     } while (current != begin && (!new_selected || !old_selected));
 
-    // Must have found node - ie. passed node must be part of 'activity'
+    // Must have found node
     JADE_ASSERT(new_selected);
+    JADE_ASSERT(new_selected->node == node);
 
     // Deactivate prior selection
     if (old_selected) {
@@ -471,13 +441,13 @@ void gui_select_node(gui_activity_t* activity, gui_view_node_t* node)
     set_tree_selection(new_selected->node, true);
     gui_repaint(new_selected->node);
 
-    activity->selectables = new_selected;
+    node->activity->selectables = new_selected;
 }
 
 // select the next item in the selectables list
 // Returns true if the selection is 'moved' to a subsequent item, or false if not (and selection left unchanged)
 // eg. no current item selected, no other selectable items, no later selectable items [and not wrapping] etc.
-static bool gui_select_next(gui_activity_t* activity)
+static bool select_next(gui_activity_t* activity)
 {
     JADE_ASSERT(activity);
 
@@ -538,10 +508,41 @@ static void select_action(gui_activity_t* activity)
 
     selectable_t* const current = activity->selectables;
     if (current && current->node->is_selected && current->node->button->click_event_id != GUI_BUTTON_EVENT_NONE) {
+        JADE_ASSERT(current->node->activity == activity);
         const esp_err_t rc = esp_event_post(GUI_BUTTON_EVENT, current->node->button->click_event_id,
             &current->node->button->args, sizeof(void*), 100 / portTICK_PERIOD_MS);
         JADE_ASSERT(rc == ESP_OK);
     }
+}
+
+// Mark a collection of nodes as active or inactive, select one, and redraw the entire activity.
+void gui_activity_set_active_selection(gui_activity_t* activity, gui_view_node_t** nodes, const size_t num_nodes,
+    const bool* active, gui_view_node_t* selected)
+{
+    JADE_ASSERT(activity);
+    JADE_ASSERT(nodes);
+    JADE_ASSERT(num_nodes);
+    JADE_ASSERT(active);
+    JADE_ASSERT(selected);
+
+    bool set_selected = false;
+    JADE_SEMAPHORE_TAKE(gui_mutex);
+    for (size_t i = 0; i < num_nodes; ++i) {
+        JADE_ASSERT(nodes[i]->activity == activity);
+        set_tree_active(nodes[i], active[i]);
+        if (nodes[i] == selected) {
+            JADE_ASSERT(active[i]); // can only select active node
+            select_node(nodes[i]);
+            set_selected = true;
+        }
+    }
+    JADE_SEMAPHORE_GIVE(gui_mutex);
+
+    // 'selected' should have been seen in 'nodes'
+    JADE_ASSERT(set_selected);
+
+    // May as well repaint the whole activity
+    gui_repaint(activity->root_node);
 }
 
 // push a selectable element to the `selectables` list of `activity`
@@ -622,9 +623,8 @@ static void push_updatable(
 // call to 'gui_set_current_activity_ex()' passing 'free_other_activities' as true.
 // eg. when the main loop reaches some known point (eg. getting back to the main dashboard
 // screen between actions) it can call this to 'garbage collect' all outstanding gui elements.
-// If not 'managed', just create and return the activity - the caller must free by calling
-// free_unmanaged_activity() explicitly - this may be required for long-lived activities
-// (eg. the main dashboard screen) or for particularly large activities which need freeing asap.
+// If not 'managed', we are making the dashboard activity, which persists as long as the
+// firmware is running, and will never be freed.
 void gui_make_activity_ex(gui_activity_t** ppact, const bool has_status_bar, const char* title, const bool managed)
 {
     JADE_INIT_OUT_PPTR(ppact);
@@ -767,26 +767,6 @@ static void free_managed_activity(activity_holder_t* holder)
     free(holder);
 }
 
-// Free an activity-holder and all of the activity contents (title, selectables/updatables etc.)
-void free_unmanaged_activity(gui_activity_t* activity)
-{
-    JADE_ASSERT(activity);
-
-#ifdef CONFIG_DEBUG_MODE
-    // Assert this is indeed an 'unmanaged' activity
-    // ie. is not in the list of managed activities
-    JADE_SEMAPHORE_TAKE(gui_mutex);
-    for (activity_holder_t* managed = existing_activities; managed; managed = managed->next) {
-        JADE_ASSERT(&managed->activity != activity);
-    }
-    JADE_SEMAPHORE_GIVE(gui_mutex);
-#endif
-
-    JADE_LOGW("Freeing unmanaged gui activity at %p", activity);
-    free_activity_internals(activity);
-    free(activity);
-}
-
 static void switch_activity_callback(void* handler_arg, esp_event_base_t base, int32_t id, void* event_data)
 {
     JADE_ASSERT(handler_arg);
@@ -794,7 +774,7 @@ static void switch_activity_callback(void* handler_arg, esp_event_base_t base, i
     gui_set_current_activity(activity);
 }
 
-static void gui_connect_button_activity(gui_view_node_t* node, gui_activity_t* activity)
+static void connect_button_activity(gui_view_node_t* node, gui_activity_t* activity)
 {
     JADE_ASSERT(node);
     JADE_ASSERT(node->activity);
@@ -821,12 +801,12 @@ void gui_chain_activities(const link_activity_t* link_act, linked_activities_inf
     if (pActInfo->last_activity) {
         if (link_act->prev_button) {
             // connect our "prev" btn to prev activity
-            gui_connect_button_activity(link_act->prev_button, pActInfo->last_activity);
+            connect_button_activity(link_act->prev_button, pActInfo->last_activity);
         }
 
         // connect prev "next" btn to this activity
         if (pActInfo->last_activity_next_button) {
-            gui_connect_button_activity(pActInfo->last_activity_next_button, link_act->activity);
+            connect_button_activity(pActInfo->last_activity_next_button, link_act->activity);
         }
     }
 
@@ -835,44 +815,65 @@ void gui_chain_activities(const link_activity_t* link_act, linked_activities_inf
     pActInfo->last_activity_next_button = link_act->next_button;
 }
 
-// attach a view node (recusively) to an activity
-static void set_tree_activity(gui_view_node_t* node, gui_activity_t* activity)
+// attach a view node (recusively) to an activity, by inheriting the activity from the parent
+static void set_tree_activity(gui_view_node_t* node)
 {
     JADE_ASSERT(node);
-    // JADE_ASSERT(activity); TODO: does it make sense to allow to set a NULL activity? we use it for the status bar
+    JADE_ASSERT(node->parent);
 
+    // node should not already have an activity
     JADE_ASSERT(!node->activity);
 
-    // set our
-    node->activity = activity;
+    // NOTE: activity can be null if ultimate parent not attached yet
+    // ie. making a node subtree before attaching subtree root to activity tree
+    node->activity = node->parent->activity;
 
-    // and then all the others
-    gui_view_node_t* current = node->child;
-    while (current) {
-        set_tree_activity(current, activity);
-        current = current->sibling;
+    // set child nodes (depth first recursion)
+    gui_view_node_t* child = node->child;
+    while (child) {
+        set_tree_activity(child);
+        child = child->sibling;
     }
 }
 
-// set a parent for a node and also add the node to the parent's children list
-// TODO: if `child` is selectable, check that there are no other selectable items in its subtree (from parent to root)
+// Helper function to check if node or any of its ancestors are selectable
+static bool has_selectable_ancestor(gui_view_node_t* node)
+{
+    while (node) {
+        if (is_kind_selectable(node->kind)) {
+            return true;
+        }
+        node = node->parent;
+    }
+    return false;
+}
+
 void gui_set_parent(gui_view_node_t* child, gui_view_node_t* parent)
 {
     JADE_ASSERT(child);
     JADE_ASSERT(parent);
+    // NOTE: parent->activity can be null if parent not attached yet
+    // ie. making a node subtree before attaching subtree root to activity tree
 
     // child should not already have a parent
     JADE_ASSERT(!child->parent);
+
+    // Check that if child is selectable, none of its ancestors are selectable
+    if (is_kind_selectable(child->kind)) {
+        JADE_ASSERT_MSG(
+            !has_selectable_ancestor(parent), "Cannot set parent: selectable child cannot have selectable ancestors");
+    }
+
     child->parent = parent;
 
     // also inherits the activity
-    set_tree_activity(child, parent->activity);
+    set_tree_activity(child);
 
     // first child
     if (!parent->child) {
         parent->child = child;
     } else {
-        // Add to tail
+        // Add to tail of siblings list
         gui_view_node_t* ptr = parent->child;
         while (ptr->sibling) {
             ptr = ptr->sibling;
@@ -996,17 +997,17 @@ static void make_split_node(
     data->parts = parts;
 
     // copy the values
-    data->values = JADE_CALLOC(1, sizeof(uint8_t) * parts);
+    data->values = JADE_CALLOC(1, sizeof(uint16_t) * parts);
 
     for (uint8_t i = 0; i < parts; ++i) {
-        data->values[i] = va_arg(values, uint32_t);
+        data->values[i] = (uint16_t)va_arg(values, uint32_t);
     };
 
     // ... and also set a destructor to free them later
     make_view_node(ptr, split_kind, data, free_view_node_split_data);
 }
 
-void gui_make_hsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint32_t parts, ...)
+void gui_make_hsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint8_t parts, ...)
 {
     JADE_INIT_OUT_PPTR(ptr);
 
@@ -1016,7 +1017,7 @@ void gui_make_hsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint32_t p
     va_end(args);
 }
 
-void gui_make_vsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint32_t parts, ...)
+void gui_make_vsplit(gui_view_node_t** ptr, enum gui_split_type kind, uint8_t parts, ...)
 {
     JADE_INIT_OUT_PPTR(ptr);
 
@@ -1452,7 +1453,7 @@ static bool text_scroll_frame_callback(gui_view_node_t* node, void* extra_args)
     // the string can fit entirely in its box, no need to scroll. we might need to reset stuff though, if the text has
     // changed
     if (can_text_fit(node->render_data.resolved_text, node->text->font, node->render_data.padded_constraints)) {
-        uint8_t old_offset = node->text->scroll->offset;
+        const size_t old_offset = node->text->scroll->offset;
 
         // set offset to zero and wait a little before checking again
         node->text->scroll->going_back = false;
@@ -1556,8 +1557,8 @@ void gui_set_text_font(gui_view_node_t* node, uint32_t font)
 
 void gui_set_text_default_font(gui_view_node_t* node) { gui_set_text_font(node, GUI_DEFAULT_FONT); }
 
-// resolve transalted strings/etc
-static void gui_resolve_text(gui_view_node_t* node)
+// resolve translated strings/etc
+static void resolve_text(gui_view_node_t* node)
 {
     JADE_ASSERT(node);
     JADE_ASSERT(node->kind == TEXT);
@@ -1578,20 +1579,9 @@ static void gui_resolve_text(gui_view_node_t* node)
     node->render_data.resolved_text_length = strlen(node->render_data.resolved_text);
 }
 
-// Helper to get the ultimate root node for any given node
-static inline gui_view_node_t* gui_get_root_node(gui_view_node_t* node)
-{
-    JADE_ASSERT(node);
-    gui_view_node_t* root = node;
-    while (root->parent) {
-        root = root->parent;
-    }
-    return root;
-}
-
 // Helper function to just update the text node internal text data - does not repaint,
 // so several nodes can be updated then a single repaint issued - eg. the status bar
-static void gui_update_text_node_text(gui_view_node_t* node, const char* text)
+static void update_text_node_text(gui_view_node_t* node, const char* text)
 {
     JADE_ASSERT(node);
     JADE_ASSERT(node->kind == TEXT);
@@ -1608,7 +1598,7 @@ static void gui_update_text_node_text(gui_view_node_t* node, const char* text)
     node->text->text = new_text;
 
     // resolve text references
-    gui_resolve_text(node);
+    resolve_text(node);
 }
 
 // Takes the gui_mutex, updates the text node, and then only draws the
@@ -1622,7 +1612,7 @@ void gui_update_text(gui_view_node_t* node, const char* text)
     // if part of current activity release the mutex and post
     // a message to the gui task to repaint it.
     JADE_SEMAPHORE_TAKE(gui_mutex);
-    gui_update_text_node_text(node, text);
+    update_text_node_text(node, text);
     const bool repaint = current_activity && node->activity == current_activity;
     JADE_SEMAPHORE_GIVE(gui_mutex);
 
@@ -1696,7 +1686,7 @@ void gui_update_picture(gui_view_node_t* node, const Picture* picture, const boo
     }
 }
 
-static inline color_t DEBUG_COLOR(uint8_t depth)
+static inline color_t DEBUG_COLOR(const uint8_t depth)
 {
     switch (depth) {
     case 0:
@@ -1746,7 +1736,7 @@ static void render_node(gui_view_node_t* node, const dispWin_t constraints, cons
 
         // resolve the value for text objects
         if (node->kind == TEXT) {
-            gui_resolve_text(node);
+            resolve_text(node);
         }
 
         node->render_data.is_first_time = false;
@@ -1920,7 +1910,7 @@ static void render_text(gui_view_node_t* node, dispWin_t cs)
     } else {
         // normal print with wrap
         if (node->text->noise) { // with noise
-            color_t color = node->is_selected ? node->text->selected_color : node->text->color;
+            const color_t color = node->is_selected ? node->text->selected_color : node->text->color;
 
             int pos_x = 0;
             switch (node->text->halign) {
@@ -1937,8 +1927,8 @@ static void render_text(gui_view_node_t* node, dispWin_t cs)
 
             const int pos_y = resolve_valign(0, node->text->valign);
 
-            uint8_t offset_x = 0;
-            uint8_t offset_y = 0;
+            uint16_t offset_x = 0;
+            uint16_t offset_y = 0;
             char buf[2] = { '\0', '\0' };
             for (size_t i = 0; i < node->render_data.resolved_text_length; ++i) {
                 buf[0] = node->render_data.resolved_text[i];
@@ -2086,7 +2076,7 @@ static void repaint_node(gui_view_node_t* node)
     }
 }
 
-static void gui_render_activity(gui_activity_t* activity)
+static void render_activity(gui_activity_t* activity)
 {
     JADE_ASSERT(activity);
     JADE_ASSERT(activity->root_node);
@@ -2098,11 +2088,13 @@ static void gui_render_activity(gui_activity_t* activity)
         // If the activity has an 'initial_selection' and it appears active, select it now
         // If not, select the first active item
         if (activity->initial_selection && activity->initial_selection->is_active) {
-            gui_select_node(activity, activity->initial_selection);
+            JADE_ASSERT(activity->initial_selection->activity == activity);
+            select_node(activity->initial_selection);
         } else {
-            gui_view_node_t* const node = gui_get_first_active_node(activity);
+            gui_view_node_t* const node = get_first_active_node(activity);
             if (node) {
-                gui_select_node(activity, node);
+                JADE_ASSERT(node->activity == activity);
+                select_node(node);
             }
         }
     }
@@ -2131,7 +2123,7 @@ static bool update_status_bar(const bool force_redraw)
     dispWin_t status_bar_cs = GUI_DISPLAY_WINDOW;
     status_bar_cs.y2 = status_bar_cs.y1 + GUI_STATUS_BAR_HEIGHT;
 
-    // NOTE: we use the internal 'gui_update_text_node_text()' method here
+    // NOTE: we use the internal 'update_text_node_text()' method here
     // since we don't want to redraw each update individually, but rather
     // capture in a single repaint after all nodes are updated.
     if ((status_bar.battery_update_counter % 10) == 0) {
@@ -2144,9 +2136,9 @@ static bool update_status_bar(const bool force_redraw)
         if (new_ble != status_bar.last_ble_val) {
             status_bar.last_ble_val = new_ble;
             if (new_ble) {
-                gui_update_text_node_text(status_bar.ble_text, (char[]){ 'E', '\0' });
+                update_text_node_text(status_bar.ble_text, (char[]){ 'E', '\0' });
             } else {
-                gui_update_text_node_text(status_bar.ble_text, (char[]){ 'F', '\0' });
+                update_text_node_text(status_bar.ble_text, (char[]){ 'F', '\0' });
             }
             status_bar.updated = true;
         }
@@ -2155,11 +2147,11 @@ static bool update_status_bar(const bool force_redraw)
         if (new_usb != status_bar.last_usb_val) {
             status_bar.last_usb_val = new_usb;
             if (new_usb) {
-                gui_update_text_node_text(status_bar.usb_text, (char[]){ 'C', '\0' });
+                update_text_node_text(status_bar.usb_text, (char[]){ 'C', '\0' });
                 // FIXME: change to charging rather than usb connected
                 // serial_start();
             } else {
-                gui_update_text_node_text(status_bar.usb_text, (char[]){ 'D', '\0' });
+                update_text_node_text(status_bar.usb_text, (char[]){ 'D', '\0' });
                 // FIXME: change to no power rather than usb connected
                 // serial_stop();
             }
@@ -2177,7 +2169,7 @@ static bool update_status_bar(const bool force_redraw)
         if (new_bat != status_bar.last_battery_val) {
             status_bar.last_battery_val = new_bat;
             gui_set_color(status_bar.battery_text, color);
-            gui_update_text_node_text(status_bar.battery_text, (char[]){ new_bat + '0', '\0' });
+            update_text_node_text(status_bar.battery_text, (char[]){ new_bat + '0', '\0' });
             status_bar.updated = true;
         }
         status_bar.battery_update_counter = 60;
@@ -2205,15 +2197,13 @@ static size_t handle_gui_input_queue(bool* switched_activities)
 
     gui_task_job_t* job = NULL;
     size_t item_size = 0;
+
     while ((job = xRingbufferReceive(gui_input_queue, &item_size, 10 / portTICK_PERIOD_MS))) {
         JADE_ASSERT(item_size == sizeof(gui_task_job_t));
 
         // *Either* repainting a node *or* moving to a whole new activity
         JADE_ASSERT(!job->node_to_repaint != !job->new_activity);
         activity_holder_t* to_free = job->to_free;
-
-        // Take the main gui mutex
-        JADE_SEMAPHORE_TAKE(gui_mutex);
 
         if (job->new_activity && job->new_activity != current_activity) {
             *switched_activities = true;
@@ -2244,12 +2234,12 @@ static size_t handle_gui_input_queue(bool* switched_activities)
             // Update the status bar text for the new activity
             if (current_activity->status_bar) {
                 const bool force_redraw = true;
-                gui_update_text_node_text(status_bar.title, current_activity->title ? current_activity->title : "");
+                update_text_node_text(status_bar.title, current_activity->title ? current_activity->title : "");
                 update_status_bar(force_redraw);
             }
 
             // Draw the new activity
-            gui_render_activity(current_activity);
+            render_activity(current_activity);
 
             // Register new events
             activity_event_t* l = current_activity->activity_events;
@@ -2266,9 +2256,6 @@ static size_t handle_gui_input_queue(bool* switched_activities)
             // Issue repaint command on the node passed
             repaint_node(job->node_to_repaint);
         }
-
-        // Release the main gui mutex
-        JADE_SEMAPHORE_GIVE(gui_mutex);
 
         // Return the ringbuffer slot
         vRingbufferReturnItem(gui_input_queue, job);
@@ -2325,6 +2312,9 @@ static void gui_task(void* args)
         // time each loop, just let vTaskDelayUntil() track the 'last_wake' count.
         vTaskDelayUntil(&last_wake, period);
 
+        // Take the gui semaphore while the gui task is awake
+        JADE_SEMAPHORE_TAKE(gui_mutex);
+
         // Check the input queue - repaint node or set new activity if need be
         // Note: this can also free all the old/completed activities
         bool switched_activities = false;
@@ -2332,6 +2322,7 @@ static void gui_task(void* args)
         if (jobs_handled > 4) {
             JADE_LOGW("gui task handled %u jobs", jobs_handled);
         }
+
         bool updated = true;
         if (!switched_activities) {
             // Not switching activities, update any 'updatable' gui elements on this activity
@@ -2344,6 +2335,8 @@ static void gui_task(void* args)
             // Flush
             display_flush();
         }
+
+        JADE_SEMAPHORE_GIVE(gui_mutex);
     }
 
     vTaskDelete(NULL);
@@ -2370,18 +2363,18 @@ void gui_front_click(void)
     }
 }
 
-static void gui_next_right(void)
+void select_next_right(void)
 {
     if (!idletimer_register_activity(true)) {
-        gui_select_next(current_activity);
+        select_next(current_activity);
         esp_event_post(GUI_EVENT, GUI_WHEEL_RIGHT_EVENT, NULL, 0, 50 / portTICK_PERIOD_MS);
     }
 }
 
-static void gui_prev_left(void)
+void select_prev_left(void)
 {
     if (!idletimer_register_activity(true)) {
-        gui_select_prev(current_activity);
+        select_prev(current_activity);
         esp_event_post(GUI_EVENT, GUI_WHEEL_LEFT_EVENT, NULL, 0, 50 / portTICK_PERIOD_MS);
     }
 }
@@ -2389,27 +2382,28 @@ static void gui_prev_left(void)
 void gui_next(void)
 {
     if (gui_orientation_flipped) {
-        gui_prev_left();
+        select_prev_left();
     } else {
-        gui_next_right();
+        select_next_right();
     }
 }
 
 void gui_prev(void)
 {
     if (gui_orientation_flipped) {
-        gui_next_right();
+        select_next_right();
     } else {
-        gui_prev_left();
+        select_prev_left();
     }
 }
 
 // Set the item to be initally selected when the activity is activated/switched-to
 // 'node' can be NULL to unset any specific initial selection
-void gui_set_activity_initial_selection(gui_activity_t* activity, gui_view_node_t* node)
+void gui_set_activity_initial_selection(gui_view_node_t* node)
 {
-    JADE_ASSERT(activity);
-    activity->initial_selection = node;
+    JADE_ASSERT(node);
+    JADE_ASSERT(node->activity);
+    node->activity->initial_selection = node;
 }
 
 // Post a node to the gui task to be repainted
@@ -2429,8 +2423,10 @@ void gui_repaint(gui_view_node_t* node)
 
     // Post the node to the gui task
     const gui_task_job_t node_repaint_info = { .node_to_repaint = node, .new_activity = NULL, .to_free = NULL };
-    while (xRingbufferSend(gui_input_queue, &node_repaint_info, sizeof(node_repaint_info), portMAX_DELAY) != pdTRUE) {
-        // wait for a spot in the ring
+    while (xRingbufferSend(gui_input_queue, &node_repaint_info, sizeof(node_repaint_info), 500 / portTICK_PERIOD_MS)
+        != pdTRUE) {
+        // wait for a spot in the ringbuffer
+        JADE_LOGW("Failed to send node repaint info using gui ringbuffer");
     }
 }
 
@@ -2475,8 +2471,9 @@ void gui_set_current_activity_ex(gui_activity_t* new_current, const bool free_ma
     }
 
     // Post the new activity and the list to free to the gui task
-    while (xRingbufferSend(gui_input_queue, &switch_info, sizeof(switch_info), portMAX_DELAY) != pdTRUE) {
-        // wait for a spot in the ring
+    while (xRingbufferSend(gui_input_queue, &switch_info, sizeof(switch_info), 500 / portTICK_PERIOD_MS) != pdTRUE) {
+        // wait for a spot in the ringbuffer
+        JADE_LOGW("Failed to send new activity using gui ringbuffer");
     }
 }
 

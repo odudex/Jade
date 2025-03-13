@@ -5,6 +5,7 @@
 #include "../process.h"
 #include "../utils/cbor_rpc.h"
 #include "../utils/network.h"
+#include "../wallet.h"
 
 #define COMMITMENTS_NONE 0x0
 #define COMMITMENTS_ABF 0x1
@@ -27,16 +28,6 @@ typedef struct {
     size_t value_blind_proof_len;
     uint8_t content;
 } commitment_t;
-
-typedef struct {
-    uint8_t sig[EC_SIGNATURE_DER_MAX_LEN + 1]; /* +1 for sighash byte */
-    uint32_t path[MAX_PATH_LEN];
-    uint8_t signature_hash[SHA256_LEN];
-    char id[MAXLEN_ID + 1];
-    size_t path_len;
-    size_t sig_len;
-    uint8_t sighash;
-} signing_data_t;
 
 #define HAS_NO_CURRENT_MESSAGE(process)                                                                                \
     (process && !process->ctx.cbor && !process->ctx.cbor_len && process->ctx.source == SOURCE_NONE)
@@ -121,14 +112,14 @@ bool params_multisig_pubkeys(bool is_change, CborValue* params, multisig_data_t*
 bool params_get_master_blindingkey(
     CborValue* params, uint8_t* master_blinding_key, size_t master_blinding_key_len, const char** errmsg);
 
-bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* params, bool* is_witness,
-    signing_data_t* sig_data, const uint8_t** ae_host_commitment, size_t* ae_host_commitment_len,
-    const uint8_t** script, size_t* script_len, script_flavour_t* aggregate_script_flavour, const char** errmsg);
+bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* params, signing_data_t* sig_data,
+    const uint8_t** ae_host_commitment, size_t* ae_host_commitment_len, const uint8_t** script, size_t* script_len,
+    script_flavour_t* aggregate_script_flavour, const char** errmsg);
 
 bool params_get_bip85_rsa_key(CborValue* params, size_t* key_bits, size_t* index, const char** errmsg);
 
 // Track the types of the input prevout scripts
-script_flavour_t get_script_flavour(const uint8_t* script, const size_t script_len);
+script_flavour_t get_script_flavour(const uint8_t* script, const size_t script_len, bool* is_p2tr);
 void update_aggregate_scripts_flavour(script_flavour_t new_script_flavour, script_flavour_t* aggregate_scripts_flavour);
 
 #endif /* PROCESS_UTILS_H_ */

@@ -29,7 +29,7 @@ gui_view_node_t* make_even_split(const ui_button_layout_t layout, const uint8_t 
     // num_splits range asserted in switch below
 
     // Make the split relevant for the number of buttons
-    typedef void (*make_split_fn)(gui_view_node_t * *ptr, enum gui_split_type kind, uint32_t parts, ...);
+    typedef void (*make_split_fn)(gui_view_node_t * *ptr, enum gui_split_type kind, uint8_t parts, ...);
     make_split_fn make_split = (layout == UI_COLUMN) ? gui_make_vsplit : gui_make_hsplit;
 
     // Make a split for the number of buttons (if greater than one)
@@ -56,7 +56,6 @@ gui_view_node_t* make_even_split(const ui_button_layout_t layout, const uint8_t 
 // Helper to make a standard button, for consistent look and feel behaviour
 void add_button(gui_view_node_t* parent, btn_data_t* btn_info)
 {
-    JADE_ASSERT(parent);
     JADE_ASSERT(btn_info);
 
     // Cannot specify both 'text label' and 'explicit content'
@@ -98,7 +97,6 @@ void add_button(gui_view_node_t* parent, btn_data_t* btn_info)
 // Helper to create buttons in a row or column
 void add_buttons(gui_view_node_t* parent, const ui_button_layout_t layout, btn_data_t* btns, const size_t num_btns)
 {
-    JADE_ASSERT(parent);
     JADE_ASSERT(layout == UI_ROW || layout == UI_COLUMN);
     JADE_ASSERT(btns);
     JADE_ASSERT(num_btns);
@@ -132,7 +130,6 @@ static inline btn_data_t* add_default_border(btn_data_t* btn, const uint32_t def
 void populate_title_bar(
     gui_view_node_t* bar, const char* title, btn_data_t* btns, const size_t num_btns, gui_view_node_t** title_node)
 {
-    JADE_ASSERT(bar);
     JADE_ASSERT(title || btns);
     JADE_ASSERT((btns && num_btns == 2) || !num_btns);
     JADE_ASSERT(!title_node || title);
@@ -507,7 +504,7 @@ static bool await_yesno_activity_impl(const char* title, const char* message[], 
 
     gui_activity_t* const act
         = make_show_message_activity(message, message_size, title, hdrbtns, help_url ? 2 : 0, ftrbtns, 2);
-    gui_set_activity_initial_selection(act, ftrbtns[default_selection ? 1 : 0].btn);
+    gui_set_activity_initial_selection(ftrbtns[default_selection ? 1 : 0].btn);
 
     return await_yesno_activity_loop(act, help_url);
 }
@@ -548,7 +545,7 @@ bool await_continueback_activity(const char* title, const char* message[], const
     btn_data_t ftrbtn = { .txt = "Continue", .font = GUI_DEFAULT_FONT, .ev_id = BTN_YES, .borders = GUI_BORDER_TOP };
 
     gui_activity_t* const act = make_show_message_activity(message, message_size, title, hdrbtns, 2, &ftrbtn, 1);
-    gui_set_activity_initial_selection(act, (default_selection ? ftrbtn : hdrbtns[0]).btn);
+    gui_set_activity_initial_selection((default_selection ? ftrbtn : hdrbtns[0]).btn);
 
     return await_yesno_activity_loop(act, help_url);
 }

@@ -12,6 +12,7 @@
 #include "../utils/network.h"
 #include "../utils/temporary_stack.h"
 #include "../utils/util.h"
+#include "../utils/wally_ext.h"
 #include "../wallet.h"
 
 #include <sodium/utils.h>
@@ -34,8 +35,6 @@ bool validate_wallet_outputs(jade_process_t* process, const char* network, const
     CborValue* wallet_outputs, output_info_t* output_info, const char** errmsg);
 void send_ae_signature_replies(jade_process_t* process, signing_data_t* all_signing_data, uint32_t num_inputs);
 void send_ec_signature_replies(jade_msg_source_t source, signing_data_t* all_signing_data, uint32_t num_inputs);
-
-static void wally_free_tx_wrapper(void* tx) { JADE_WALLY_VERIFY(wally_tx_free((struct wally_tx*)tx)); }
 
 static const char TX_TYPE_STR_SWAP[] = "swap";
 static const char TX_TYPE_STR_SEND_PAYMENT[] = "send_payment";
@@ -478,12 +477,12 @@ static bool add_output_info(
         }
 
         // 4. Fetch the asset_id, value, and optional blinding_key into the info struct
-        JADE_ASSERT(sizeof(outinfo->asset_id) == sizeof(commitments->asset_id));
+        JADE_STATIC_ASSERT(sizeof(outinfo->asset_id) == sizeof(commitments->asset_id));
         memcpy(outinfo->asset_id, commitments->asset_id, sizeof(commitments->asset_id));
         outinfo->value = commitments->value;
 
         if (commitments->content & COMMITMENTS_BLINDING_KEY) {
-            JADE_ASSERT(sizeof(outinfo->blinding_key) == sizeof(commitments->blinding_key));
+            JADE_STATIC_ASSERT(sizeof(outinfo->blinding_key) == sizeof(commitments->blinding_key));
             memcpy(outinfo->blinding_key, commitments->blinding_key, sizeof(commitments->blinding_key));
             outinfo->flags |= OUTPUT_FLAG_HAS_BLINDING_KEY;
         }
@@ -559,7 +558,7 @@ void sign_liquid_tx_process(void* process_ptr)
         jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to extract tx from passed bytes", NULL);
         goto cleanup;
     }
-    jade_process_call_on_exit(process, wally_free_tx_wrapper, tx);
+    jade_process_call_on_exit(process, jade_wally_free_tx_wrapper, tx);
 
     // copy the amount
     size_t num_inputs = 0;
@@ -807,7 +806,6 @@ void sign_liquid_tx_process(void* process_ptr)
         // txn input as expected - get input parameters
         GET_MSG_PARAMS(process);
 
-        bool is_witness = false;
         size_t script_len = 0;
         const uint8_t* script = NULL;
 
@@ -823,6 +821,8 @@ void sign_liquid_tx_process(void* process_ptr)
         rpc_get_id(&process->ctx.value, sig_data->id, sizeof(sig_data->id), &written);
         JADE_ASSERT(written != 0);
 
+        bool made_ae_commitment = false;
+
         // Path node can be omitted if we don't want to sign this input
         // (But if passed must be valid - empty/root path is not allowed for signing)
         // Make signature-hash (should have a prevout script in hand)
@@ -831,7 +831,7 @@ void sign_liquid_tx_process(void* process_ptr)
             signing = true;
 
             // Get all common tx-signing input fields which must be present if a path is given
-            if (!params_tx_input_signing_data(use_ae_signatures, &params, &is_witness, sig_data, &ae_host_commitment,
+            if (!params_tx_input_signing_data(use_ae_signatures, &params, sig_data, &ae_host_commitment,
                     &ae_host_commitment_len, &script, &script_len, &aggregate_inputs_scripts_flavour, &errmsg)) {
                 jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, errmsg, NULL);
                 goto cleanup;
@@ -846,7 +846,7 @@ void sign_liquid_tx_process(void* process_ptr)
             // As we are signing this input, use it to validate some part of any passed 'input summary'
             if (wallet_input_summary) {
                 // We can only verify input amounts with segwit inputs which have an explicit commitment to sign
-                if (!is_witness) {
+                if (sig_data->sig_type == WALLY_SIGTYPE_PRE_SW) {
                     jade_process_reject_message(
                         process, CBOR_RPC_BAD_PARAMETERS, "Non-segwit input cannot be used as verified amount", NULL);
                     goto cleanup;
@@ -866,7 +866,7 @@ void sign_liquid_tx_process(void* process_ptr)
 
             size_t value_len = 0;
             const uint8_t* value_commitment = NULL;
-            if (is_witness) {
+            if (sig_data->sig_type != WALLY_SIGTYPE_PRE_SW) {
                 JADE_LOGD("For segwit input using explicitly passed value_commitment");
                 rpc_get_bytes_ptr("value_commitment", &params, &value_commitment, &value_len);
                 if (value_len != ASSET_COMMITMENT_LEN && value_len != WALLY_TX_ASSET_CT_VALUE_UNBLIND_LEN) {
@@ -877,17 +877,17 @@ void sign_liquid_tx_process(void* process_ptr)
             }
 
             // Generate hash of this input which we will sign later
-            if (!wallet_get_elements_tx_input_hash(tx, index, is_witness, script, script_len,
+            if (!wallet_get_elements_tx_input_hash(tx, index, sig_data->sig_type, script, script_len,
                     value_len == 0 ? NULL : value_commitment, value_len, sig_data->sighash, sig_data->signature_hash,
                     sizeof(sig_data->signature_hash))) {
                 jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Failed to make tx input hash", NULL);
                 goto cleanup;
             }
 
-            // If using anti-exfil signatures, compute signer commitment for returning to caller
-            if (use_ae_signatures) {
+            // If using anti-exfil signatures for this input,
+            // compute signer commitment for returning to caller
+            if (sig_data->use_ae) {
                 JADE_ASSERT(ae_host_commitment);
-                JADE_ASSERT(ae_host_commitment_len == WALLY_HOST_COMMITMENT_LEN);
                 if (!wallet_get_signer_commitment(sig_data->signature_hash, sizeof(sig_data->signature_hash),
                         sig_data->path, sig_data->path_len, ae_host_commitment, ae_host_commitment_len,
                         ae_signer_commitment, sizeof(ae_signer_commitment))) {
@@ -895,6 +895,7 @@ void sign_liquid_tx_process(void* process_ptr)
                         process, CBOR_RPC_INTERNAL_ERROR, "Failed to make ae signer commitment", NULL);
                     goto cleanup;
                 }
+                made_ae_commitment = true;
             }
         } else {
             // Empty byte-string reply (no path given implies no sig needed or expected)
@@ -903,13 +904,14 @@ void sign_liquid_tx_process(void* process_ptr)
             JADE_ASSERT(sig_data->path_len == 0);
         }
 
-        // If using ae-signatures, reply with the signer commitment
+        // If using ae-signatures, reply with the (possibly empty) signer commitment
         // FIXME: change message flow to reply here even when not using ae-signatures
         // as this simplifies the code both here and in the client.
         if (use_ae_signatures) {
             uint8_t buffer[256];
-            jade_process_reply_to_message_bytes(process->ctx, ae_signer_commitment,
-                has_path ? sizeof(ae_signer_commitment) : 0, buffer, sizeof(buffer));
+            const size_t commitment_len = made_ae_commitment ? sizeof(ae_signer_commitment) : 0;
+            jade_process_reply_to_message_bytes(
+                process->ctx, ae_signer_commitment, commitment_len, buffer, sizeof(buffer));
         }
     }
 

@@ -28,7 +28,7 @@ bool check_extended_data_fields(CborValue* params, const char* expected_origid, 
     size_t origlen = 0;
     rpc_get_string_ptr("orig", params, &orig, &origlen);
 
-    char origid[MAXLEN_ID];
+    char origid[MAXLEN_ID + 1];
     size_t origidlen = 0;
     rpc_get_string("origid", sizeof(origid), params, origid, &origidlen);
 
@@ -286,12 +286,14 @@ bool params_get_master_blindingkey(
 }
 
 // Get the common parameters required when signing an tx input
-bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* params, bool* is_witness,
-    signing_data_t* sig_data, const uint8_t** ae_host_commitment, size_t* ae_host_commitment_len,
-    const uint8_t** script, size_t* script_len, script_flavour_t* aggregate_script_flavour, const char** errmsg)
+bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* params, signing_data_t* sig_data,
+    const uint8_t** ae_host_commitment, size_t* ae_host_commitment_len, const uint8_t** script, size_t* script_len,
+    script_flavour_t* aggregate_script_flavour, const char** errmsg)
 {
+    // Ensure that signing_data_t meets our expections
+    JADE_STATIC_ASSERT(sizeof(((signing_data_t*)0)->path) == MAX_PATH_LEN * sizeof(uint32_t));
+    JADE_STATIC_ASSERT(sizeof(((signing_data_t*)0)->id) == MAXLEN_ID + 1);
     JADE_ASSERT(params);
-    JADE_ASSERT(is_witness);
     JADE_ASSERT(sig_data);
     JADE_INIT_OUT_PPTR(ae_host_commitment);
     JADE_INIT_OUT_SIZE(ae_host_commitment_len);
@@ -300,10 +302,13 @@ bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* param
     JADE_ASSERT(aggregate_script_flavour);
     JADE_ASSERT(errmsg);
 
-    if (!rpc_get_boolean("is_witness", params, is_witness)) {
+    bool is_witness;
+    if (!rpc_get_boolean("is_witness", params, &is_witness)) {
         *errmsg = "Failed to extract is_witness from parameters";
         return false;
     }
+    // Assume segwit v0 for witness inputs unless v1 is detected below
+    sig_data->sig_type = is_witness ? WALLY_SIGTYPE_SW_V0 : WALLY_SIGTYPE_PRE_SW;
 
     const size_t max_path_len = sizeof(sig_data->path) / sizeof(sig_data->path[0]);
     if (!rpc_get_bip32_path("path", params, sig_data->path, max_path_len, &sig_data->path_len)
@@ -312,26 +317,30 @@ bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* param
         return false;
     }
 
-    // Get any explicit sighash byte (defaults to SIGHASH_ALL)
-    if (rpc_has_field_data("sighash", params)) {
+    // Get any explicit sighash byte.
+    // If one isn't given, we default it below according to the type
+    // of the input prevout script before returning
+    const bool have_sighash = rpc_has_field_data("sighash", params);
+    if (have_sighash) {
         size_t sighash = 0;
         if (!rpc_get_sizet("sighash", params, &sighash) || sighash > UINT8_MAX) {
             *errmsg = "Failed to fetch valid sighash from parameters";
             return false;
         }
         sig_data->sighash = (uint8_t)sighash;
-    } else {
-        // Default to SIGHASH_ALL if not passed
-        sig_data->sighash = WALLY_SIGHASH_ALL;
     }
 
-    // If required, read anti-exfil host commitment data
     if (use_ae_signatures) {
+        // Using the anti-exfil signing flow.
+        // Commitment data is optional on a per-input basis: If not provided
+        // for a given input, a normal (non-AE) signature is generated.
         rpc_get_bytes_ptr("ae_host_commitment", params, ae_host_commitment, ae_host_commitment_len);
-        if (!*ae_host_commitment || *ae_host_commitment_len != WALLY_HOST_COMMITMENT_LEN) {
+        if (*ae_host_commitment_len && *ae_host_commitment_len != WALLY_HOST_COMMITMENT_LEN) {
             *errmsg = "Failed to extract valid host commitment from parameters";
             return false;
         }
+        // Record whether we should generate an AE signature for this input
+        sig_data->use_ae = *ae_host_commitment_len != 0;
     }
 
     // Get prevout script - required for signing inputs
@@ -341,9 +350,24 @@ bool params_tx_input_signing_data(const bool use_ae_signatures, CborValue* param
         return false;
     }
 
+    bool is_p2tr = false;
+    const script_flavour_t script_flavour = get_script_flavour(*script, *script_len, &is_p2tr);
+    if (is_p2tr) {
+        if (sig_data->use_ae) {
+            // Taproot commitments must be empty, so that we can add anti-exfil
+            // support later without backwards compatibility issues.
+            *errmsg = "Invalid non-empty taproot host commitment";
+            return false;
+        }
+        sig_data->sig_type = WALLY_SIGTYPE_SW_V1;
+    }
     // Track the types of the input prevout scripts
-    const script_flavour_t script_flavour = get_script_flavour(*script, *script_len);
     update_aggregate_scripts_flavour(script_flavour, aggregate_script_flavour);
+
+    if (!have_sighash) {
+        // Default to SIGHASH_DEFAULT for taproot, or SIGHASH_ALL otherwise
+        sig_data->sighash = is_p2tr ? WALLY_SIGHASH_DEFAULT : WALLY_SIGHASH_ALL;
+    }
 
     return true;
 }
@@ -381,16 +405,23 @@ bool params_get_bip85_rsa_key(CborValue* params, size_t* key_bits, size_t* index
 }
 
 // For now just return 'single-sig' or 'other'.
-// In future may extend to inlcude eg. 'green', 'other-multisig', etc.
-script_flavour_t get_script_flavour(const uint8_t* script, const size_t script_len)
+// In future may extend to include eg. 'green', 'other-multisig', etc.
+script_flavour_t get_script_flavour(const uint8_t* script, const size_t script_len, bool* is_p2tr)
 {
     size_t script_type;
+    JADE_ASSERT(is_p2tr);
+    *is_p2tr = false;
     JADE_WALLY_VERIFY(wally_scriptpubkey_get_type(script, script_len, &script_type));
-    if (script_type == WALLY_SCRIPT_TYPE_P2PKH || script_type == WALLY_SCRIPT_TYPE_P2WPKH) {
+    switch (script_type) {
+    case WALLY_SCRIPT_TYPE_P2PKH:
+    case WALLY_SCRIPT_TYPE_P2WPKH:
         return SCRIPT_FLAVOUR_SINGLESIG;
-    } else if (script_type == WALLY_SCRIPT_TYPE_MULTISIG) {
+    case WALLY_SCRIPT_TYPE_P2TR:
+        *is_p2tr = true;
+        return SCRIPT_FLAVOUR_SINGLESIG;
+    case WALLY_SCRIPT_TYPE_MULTISIG:
         return SCRIPT_FLAVOUR_MULTISIG;
-    } else {
+    default:
         // eg. ga-csv script
         return SCRIPT_FLAVOUR_OTHER;
     }

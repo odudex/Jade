@@ -27,6 +27,7 @@
 #include "usbhmsc/usbhmsc.h"
 #include "usbhmsc/usbmode.h"
 #endif
+#include <esp_app_desc.h>
 
 // A genuine production v2 Jade may be awaiting mandatory attestation data
 #if defined(CONFIG_BOARD_TYPE_JADE_V2) && defined(CONFIG_SECURE_BOOT)                                                  \
@@ -38,15 +39,7 @@ static inline bool awaiting_attestation_data(void) { return !attestation_initial
 static inline bool awaiting_attestation_data(void) { return false; }
 #endif
 
-#ifdef CONFIG_BT_ENABLED
 #include "../ble/ble.h"
-#else
-// Stubs
-static inline bool ble_enabled(void) { return false; }
-static inline bool ble_connected(void) { return false; }
-static inline void ble_start(void) { JADE_ASSERT(false); }
-static inline void ble_stop(void) { return; }
-#endif
 #include "process/ota_defines.h"
 #include "process_utils.h"
 
@@ -683,7 +676,7 @@ static void offer_jade_reset(void)
     pin_insert_t pin_insert = { .initial_state = RANDOM, .pin_digits_shown = true };
     make_pin_insert_activity(&pin_insert, "Reset Jade", confirm_msg);
     JADE_ASSERT(pin_insert.activity);
-    JADE_ASSERT(sizeof(num) == sizeof(pin_insert.pin));
+    JADE_STATIC_ASSERT(sizeof(num) == sizeof(pin_insert.pin));
 
     gui_set_current_activity(pin_insert.activity);
     if (!run_pin_entry_loop(&pin_insert)) {

@@ -105,19 +105,19 @@ void register_otp_process(void* process_ptr)
     GET_MSG_PARAMS(process);
     ASSERT_KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process);
 
-    size_t written = 0;
     char otp_name[OTP_MAX_NAME_LEN];
-    rpc_get_string("name", sizeof(otp_name), &params, otp_name, &written);
-    if (!written || !storage_key_name_valid(otp_name)) {
+    size_t otp_name_len = 0;
+    rpc_get_string("name", sizeof(otp_name), &params, otp_name, &otp_name_len);
+    if (!otp_name_len || !storage_key_name_valid(otp_name)) {
         jade_process_reject_message(
             process, CBOR_RPC_BAD_PARAMETERS, "Failed to fetch valid otp name from parameters", NULL);
         goto cleanup;
     }
 
-    written = 0;
     const char* otp_uri = NULL;
-    rpc_get_string_ptr("uri", &params, &otp_uri, &written);
-    if (!otp_uri || !written) {
+    size_t otp_uri_len = 0;
+    rpc_get_string_ptr("uri", &params, &otp_uri, &otp_uri_len);
+    if (!otp_uri || !otp_uri_len) {
         jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Failed to fetch otp uri from parameters", NULL);
         goto cleanup;
     }
@@ -132,7 +132,7 @@ void register_otp_process(void* process_ptr)
 
     // Validate and persist the new otp uri
     const char* errmsg = NULL;
-    const int errcode = handle_new_otp_uri(otp_name, otp_uri, written, &errmsg);
+    const int errcode = handle_new_otp_uri(otp_name, otp_uri, otp_uri_len, &errmsg);
     if (errcode) {
         // Display any internal error that may occur after the user has viewed
         // and confirmed the OTP record (earlier errors are just messaged)
@@ -200,7 +200,7 @@ static bool get_otp_data_from_kb(
     if (otp_uri && uri_len) {
         JADE_INIT_OUT_SIZE(uri_written);
         JADE_ASSERT(uri_len >= OTP_MAX_URI_LEN);
-        JADE_ASSERT(sizeof(kb_entry.strdata) >= OTP_MAX_URI_LEN);
+        JADE_STATIC_ASSERT(sizeof(kb_entry.strdata) >= OTP_MAX_URI_LEN);
 
         // Reset kb data - note URI can be longer than name
         gui_set_activity_title(kb_entry.activity, "OTP URI");
@@ -317,6 +317,8 @@ static bool validate_scanned_otp_uri(qr_data_t* qr_data)
     return true;
 
 invalid_qr:
+    /* no-op */; // Need an empty statement to allow a label before a declaration
+
     // Show the user that a valid qr was scanned, but the string data
     // did not constitute a valid/parseable OTP URI string.
     const char* message[] = { "Invalid OTP URI" };

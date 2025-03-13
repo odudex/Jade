@@ -11,7 +11,7 @@
 #define ASSET_CONTRACT_BUFFER_LEN 768
 
 // flip the order of the bytes in-place
-static void reverse(uint8_t* buf, size_t len)
+static void reverse_in_place(uint8_t* buf, size_t len)
 {
     for (uint8_t *c1 = buf, *c2 = buf + len - 1; c1 < c2; ++c1, --c2) {
         const uint8_t tmp = *c1;
@@ -130,14 +130,13 @@ bool assets_get_allocate(const char* field, const CborValue* value, asset_info_t
             size_t txhashhex_len = 0;
             size_t written = 0;
             rpc_get_string_ptr("txid", &issuanceprevout, &txhashhex, &txhashhex_len);
-            if (!txhashhex || txhashhex_len != 2 * sizeof(txhash)
-                || wally_hex_n_to_bytes(txhashhex, txhashhex_len, txhash, sizeof(txhash), &written) != WALLY_OK
+            if (wally_hex_n_to_bytes(txhashhex, txhashhex_len, txhash, sizeof(txhash), &written) != WALLY_OK
                 || written != sizeof(txhash)) {
                 JADE_LOGE("Failed to get txhash for issuance prevout");
                 free(assets);
                 return false;
             }
-            reverse(txhash, sizeof(txhash));
+            reverse_in_place(txhash, sizeof(txhash));
 
             size_t index;
             if (!rpc_get_sizet("vout", &issuanceprevout, &index)) {
@@ -156,9 +155,7 @@ bool assets_get_allocate(const char* field, const CborValue* value, asset_info_t
             rpc_get_string_ptr("asset_id", &arrayItem, &asset_id_hex, &asset_id_hex_len);
 
             uint8_t asset_id[ASSET_TAG_LEN];
-            if (!asset_id_hex || asset_id_hex_len != 2 * sizeof(asset_id)
-                || wally_hex_n_to_bytes(asset_id_hex, asset_id_hex_len, asset_id, sizeof(asset_id), &written)
-                    != WALLY_OK
+            if (wally_hex_n_to_bytes(asset_id_hex, asset_id_hex_len, asset_id, sizeof(asset_id), &written) != WALLY_OK
                 || written != sizeof(asset_id) || memcmp(computed_id, asset_id, sizeof(asset_id))) {
                 JADE_LOGE("Asset id failed verification: %.*s", asset_id_hex_len, asset_id_hex);
                 free(assets);

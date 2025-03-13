@@ -35,6 +35,12 @@ void jade_abort(const char* file, const int line_n);
         }                                                                                                              \
     } while (false)
 
+// Compile-time assert that "cond" is true. If false compilation will fail.
+#define JADE_STATIC_ASSERT(cond)                                                                                       \
+    do {                                                                                                               \
+        (void)sizeof(char[1 - 2 * !(cond)]);                                                                           \
+    } while (0)
+
 // Macro to make an call and assert that the result is 0
 #define JADE_ZERO_VERIFY(expr)                                                                                         \
     do {                                                                                                               \
@@ -56,8 +62,6 @@ void jade_abort(const char* file, const int line_n);
         *psize = 0;                                                                                                    \
     } while (false)
 
-#endif
-
 // Macro to try to take what should be an available/low-contention mutex
 // Warns if taking longer than expected, eventually asserts
 #define JADE_SEMAPHORE_TAKE(s)                                                                                         \
@@ -75,3 +79,5 @@ void jade_abort(const char* file, const int line_n);
         xSemaphoreGive(s);                                                                                             \
         JADE_LOGD("Released mutex %p", (void*)s);                                                                      \
     } while (false)
+
+#endif // JADE_ASSERT_H_

@@ -1,4 +1,4 @@
-FROM blockstream/verde@sha256:c6b59066998c138c7e43a8bc12ed6f9e83ebe3476ab4c5b73619390c495ab948 as builder
+FROM blockstream/verde@sha256:391a4337c174f2eb47dc9f31d7e25d19a5f101bbc07fa8a296866c1ee52b8473 as builder
 
 ARG SDK_CONFIG=configs/sdkconfig_qemu_psram.defaults
 
@@ -12,7 +12,7 @@ RUN ./tools/fwprep.py build/jade.bin build
 ENV PATH=$PATH:/jade/main/qemu
 RUN make-flash-img.sh
 
-FROM debian:bookworm@sha256:b8084b1a576c5504a031936e1132574f4ce1d6cc7130bbcc25a28f074539ae6b
+FROM debian:bookworm@sha256:321341744acb788e251ebd374aecc1a42d60ce65da7bd4ee9207ff6be6686a62
 
 RUN apt-get update -yqq && apt-get install -yqq libpixman-1-dev libglib2.0-dev libslirp-dev libncurses-dev
 

@@ -344,7 +344,7 @@ class JadeAPI:
         dict
             The reply from the rpc call.
             NOTE: will return the last/final reply after a sequence of calls, where 'http_request'
-            was returned and remote data was fetched and passed into s subsequent call.
+            was returned and remote data was fetched and passed into a subsequent call.
         """
         newid = inputid if inputid else str(random.randint(100000, 999999))
         request = self.jade.build_request(newid, method, params)
@@ -1188,7 +1188,7 @@ class JadeAPI:
                      ae_host_commitment=None, ae_host_entropy=None):
         """
         RPC call to format and sign the given message, using the given bip32 path.
-        Supports RFC6979 and anti-exfil signatures.
+        Supports RFC6979 and Anti-Exfil signatures.
 
         Parameters
         ----------
@@ -1603,10 +1603,9 @@ class JadeAPI:
                   'multisig_name': multisig_name}
         return self._jadeRpc('get_commitments', params)
 
-    def _send_tx_inputs(self, base_id, inputs, use_ae_signatures):
+    def _send_tx_inputs(self, base_id, inputs, use_ae_signatures=False, use_legacy=False):
         """
         Helper call to send the tx inputs to Jade for signing.
-        Handles legacy RFC6979 signatures, as well as the Anti-Exfil protocol.
 
         Parameters
         ----------
@@ -1616,24 +1615,34 @@ class JadeAPI:
         inputs : [dict]
             The tx inputs - see `sign_tx()` / `sign_liquid_tx()` for details.
 
-        use_ae_signatures : bool
-            Whether to use the anti-exfil protocol to generate the signatures
+        use_ae_signatures : bool, optional
+            Whether to use the Anti-Exfil protocol to generate the signatures. Anti-Exfil
+            is enabled per-input by the presence of ae_host_commitment/ae_host_entropy.
+            Defaults to False.
+
+        use_legacy : bool, optional
+            Whether to use the legacy signing protocol to generate the signatures.
+            This protocol is deprecated and will be removed in a future firmware release.
+            This must be False to sign taproot inputs.
+            Defaults to False.
 
         Returns
         -------
         1. if use_ae_signatures is False
-        [bytes]
-            An array of signatures corresponding to the array of inputs passed.
-            The signatures are in DER format with the sighash appended.
-            'None' placeholder elements are used for inputs not requiring a signature.
+        [bytes,]
+            A list of signatures for each input given.
+            'None' is returned for any input that does not require a signature.
 
         2. if use_ae_signatures is True
-        [(32-bytes, bytes)]
-            An array of pairs of signer-commitments and signatures corresponding to the inputs.
-            The signatures are in DER format with the sighash appended.
-            (None, None) placeholder elements are used for inputs not requiring a signature.
+        [(bytes, bytes),]
+            A list of (32 byte signer-commitment, signature) tuples for each input given.
+            '(None, sig)' is returned for any input where Anti-Exfil was not requested.
+            '(None, None)' is returned for any input that does not require a signature.
+
+        The signatures are either in DER format with the sighash appended, or
+        (for taproot inputs) 64/65 byte BIP 0341 Schnorr signatures.
         """
-        if use_ae_signatures:
+        if not use_legacy:
             # Anti-exfil protocol:
             # We send one message per input (which includes host-commitment *but
             # not* the host entropy) and receive the signer-commitment in reply.
@@ -1646,7 +1655,12 @@ class JadeAPI:
             for txinput in inputs:
                 # ae-protocol - do not send the host entropy immediately
                 txinput = txinput.copy() if txinput else {}  # shallow copy
-                host_ae_entropy_values.append(txinput.pop('ae_host_entropy', None))
+                ae_host_entropy = txinput.pop('ae_host_entropy', None)
+                if not use_ae_signatures:
+                    if ae_host_entropy or txinput.get('ae_host_commitment', None):
+                        msg = 'Anti-Exfil host data present but use_ae_signatures=false'
+                        raise JadeError(1, msg, 'tx_input')
+                host_ae_entropy_values.append(ae_host_entropy)
 
                 base_id += 1
                 input_id = str(base_id)
@@ -1663,7 +1677,12 @@ class JadeAPI:
                 signatures.append(reply)
 
             assert len(signatures) == len(inputs)
-            return list(zip(signer_commitments, signatures))
+            if use_ae_signatures:
+                return list(zip(signer_commitments, signatures))
+            # Since AE host data was not allowed, we should not have
+            # received any signer commitments
+            assert all(not sc for sc in signer_commitments)
+            return signatures
         else:
             # Legacy protocol:
             # We send one message per input - without expecting replies.
@@ -1672,7 +1691,8 @@ class JadeAPI:
             # Then receive all n replies for the n signatures.
             # NOTE: *NOT* a sequence of n blocking rpc calls.
             # NOTE: at some point this flow should be removed in favour of the one
-            # above, albeit without passing anti-exfil entropy or commitment data.
+            # above.
+            assert not use_ae_signatures, 'Can not use Anti-Exfil with legacy sign_tx'
 
             # Send all n inputs
             requests = []
@@ -1699,7 +1719,7 @@ class JadeAPI:
             return signatures
 
     def sign_liquid_tx(self, network, txn, inputs, commitments, change, use_ae_signatures=False,
-                       asset_info=None, additional_info=None):
+                       asset_info=None, additional_info=None, use_legacy=False):
         """
         RPC call to sign a liquid transaction.
 
@@ -1754,7 +1774,8 @@ class JadeAPI:
             See `get_receive_address()`
 
         use_ae_signatures : bool, optional
-            Whether to use the anti-exfil protocol to generate the signatures.
+            Whether to use the Anti-Exfil protocol to generate the signatures. Anti-Exfil
+            is enabled per-input by the presence of ae_host_commitment/ae_host_entropy.
             Defaults to False.
 
         asset_info : [dict], optional
@@ -1776,19 +1797,27 @@ class JadeAPI:
             'satoshi' (int) showing net movement of assets into the wallet (ie. sum of wallet
             outputs per asset, excluding any change outputs).
 
+        use_legacy : bool, optional
+            Whether to use the legacy signing protocol to generate the signatures.
+            This protocol is deprecated and will be removed in a future firmware release.
+            This must be False to sign taproot inputs.
+            Defaults to False.
+
         Returns
         -------
         1. if use_ae_signatures is False
-        [bytes]
-            An array of signatures corresponding to the array of inputs passed.
-            The signatures are in DER format with the sighash appended.
-            'None' placeholder elements are used for inputs not requiring a signature.
+        [bytes,]
+            A list of signatures for each input given.
+            'None' is returned for any input that does not require a signature.
 
         2. if use_ae_signatures is True
-        [(32-bytes, bytes)]
-            An array of pairs of signer-commitments and signatures corresponding to the inputs.
-            The signatures are in DER format with the sighash appended.
-            (None, None) placeholder elements are used for inputs not requiring a signature.
+        [(bytes, bytes),]
+            A list of (32 byte signer-commitment, signature) tuples for each input given.
+            '(None, sig)' is returned for any inputs where Anti-Exfil was not requested.
+            '(None, None)' is returned for any input that does not require a signature.
+
+        The signatures are either in DER format with the sighash appended, or
+        (for taproot inputs) 64/65 byte BIP 0341 Schnorr signatures.
         """
         # 1st message contains txn and number of inputs we are going to send.
         # Reply ok if that corresponds to the expected number of inputs (n).
@@ -1797,7 +1826,7 @@ class JadeAPI:
                   'txn': txn,
                   'num_inputs': len(inputs),
                   'trusted_commitments': commitments,
-                  'use_ae_signatures': use_ae_signatures,
+                  'use_ae_signatures': not use_legacy,
                   'change': change,
                   'asset_info': asset_info,
                   'additional_info': additional_info}
@@ -1806,9 +1835,9 @@ class JadeAPI:
         assert reply
 
         # Send inputs and receive signatures
-        return self._send_tx_inputs(base_id, inputs, use_ae_signatures)
+        return self._send_tx_inputs(base_id, inputs, use_ae_signatures, use_legacy)
 
-    def sign_tx(self, network, txn, inputs, change, use_ae_signatures=False):
+    def sign_tx(self, network, txn, inputs, change, use_ae_signatures=False, use_legacy=False):
         """
         RPC call to sign a btc transaction.
 
@@ -1838,6 +1867,7 @@ class JadeAPI:
                 These are only required for Anti-Exfil signatures:
                 ae_host_commitment, 32-bytes - The host-commitment for Anti-Exfil signatures
                 ae_host_entropy, 32-bytes - The host-entropy for Anti-Exfil signatures
+                Note that ae_host_commitment/ae_host_entropy must be empty for taproot inputs.
 
         change : [dict]
             An array sized for the number of outputs.
@@ -1848,22 +1878,32 @@ class JadeAPI:
             Populated elements should contain sufficient data to generate the wallet address.
             See `get_receive_address()`
 
-        use_ae_signatures : bool
-            Whether to use the anti-exfil protocol to generate the signatures
+        use_ae_signatures : bool, optional
+            Whether to use the Anti-Exfil protocol to generate the signatures. Anti-Exfil
+            is enabled per-input by the presence of ae_host_commitment/ae_host_entropy.
+            Defaults to False.
+
+        use_legacy : bool, optional
+            Whether to use the legacy signing protocol to generate the signatures.
+            This protocol is deprecated and will be removed in a future firmware release.
+            This must be False to sign taproot inputs.
+            Defaults to False.
 
         Returns
         -------
         1. if use_ae_signatures is False
-        [bytes]
-            An array of signatures corresponding to the array of inputs passed.
-            The signatures are in DER format with the sighash appended.
-            'None' placeholder elements are used for inputs not requiring a signature.
+        [bytes,]
+            A list of signatures for each input given.
+            'None' is returned for any input that does not require a signature.
 
         2. if use_ae_signatures is True
-        [(32-bytes, bytes)]
-            An array of pairs of signer-commitments and signatures corresponding to the inputs.
-            The signatures are in DER format with the sighash appended.
-            (None, None) placeholder elements are used for inputs not requiring a signature.
+        [(bytes, bytes),]
+            A list of (32 byte signer-commitment, signature) tuples for each input given.
+            '(None, sig)' is returned for any input where Anti-Exfil was not requested.
+            '(None, None)' is returned for any input that does not require a signature.
+
+        The signatures are either in DER format with the sighash appended, or
+        (for taproot inputs) 64/65 byte BIP 0341 Schnorr signatures.
         """
         # 1st message contains txn and number of inputs we are going to send.
         # Reply ok if that corresponds to the expected number of inputs (n).
@@ -1871,14 +1911,14 @@ class JadeAPI:
         params = {'network': network,
                   'txn': txn,
                   'num_inputs': len(inputs),
-                  'use_ae_signatures': use_ae_signatures,
+                  'use_ae_signatures': not use_legacy,
                   'change': change}
 
         reply = self._jadeRpc('sign_tx', params, str(base_id))
         assert reply
 
         # Send inputs and receive signatures
-        return self._send_tx_inputs(base_id, inputs, use_ae_signatures)
+        return self._send_tx_inputs(base_id, inputs, use_ae_signatures, use_legacy)
 
     def sign_psbt(self, network, psbt):
         """
@@ -2084,7 +2124,7 @@ class JadeInterface:
             if finished or byte_ == b'\n' or len(drained) > 256:
                 try:
                     device_logger.warning(drained.decode('utf-8'))
-                except Exception as e:
+                except Exception as _:
                     # Dump the bytes raw and as hex if decoding as utf-8 failed
                     device_logger.warning("Raw:")
                     device_logger.warning(drained)
@@ -2262,7 +2302,7 @@ class JadeInterface:
         while True:
             try:
                 return self.read_cbor_message()
-            except EOFError as e:
+            except EOFError as _:
                 if not long_timeout:
                     raise
 

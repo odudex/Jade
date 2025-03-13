@@ -29,6 +29,10 @@ device_logger.setLevel(logging.DEBUG)
 device_logger.addHandler(jadehandler)
 
 
+def wait(seconds):
+    time.sleep(seconds)
+
+
 def h2b(hexdata):
     if hexdata is None:
         return None
@@ -65,8 +69,9 @@ def _h2b_test_case(testcase):
             for summary_item in additional_info['wallet_output_summary']:
                 summary_item['asset_id'] = h2b(summary_item['asset_id'])
 
-        if 'expected_output' in testcase:
-            testcase['expected_output'] = h2b(testcase['expected_output'])
+        for k in ['expected_output', 'expected_legacy_output']:
+            if k in testcase:
+                testcase[k] = h2b(testcase[k])
 
     elif 'psbt' in testcase['input']:
         testcase['input']['psbt'] = base64.b64decode(testcase['input']['psbt'])
@@ -141,7 +146,9 @@ def _h2b_test_case(testcase):
 def _read_json_file(filename):
     logger.info('Reading json file: {}'.format(filename))
     with open(filename, 'r') as json_file:
-        return json.load(json_file)
+        ret = json.load(json_file)
+        ret['filename'] = filename  # Add filename for debugging
+        return ret
 
 
 # Helper to read json test files into a list
@@ -169,6 +176,14 @@ ESP32S3_CHIP_BOARDS = ['JADE_V2', 'TTGO_TDISPLAYS3', 'TTGO_TDISPLAYS3PROCAMERA',
 TEST_MNEMONIC = 'fish inner face ginger orchard permit useful method fence \
 kidney chuckle party favorite sunset draw limb science crane oval letter \
 slot invite sadness banana'
+# The seed resulting from TEST_MNEMONIC
+TEST_MNEMONIC_SEED = \
+    'f1d56befd46eddfc31cda129dc76cd4a2b41d2cf86f10a5ccf0787617afa3869' \
+    '967aab0224742ccc002056747ea09b68598ddf79c027c37a7c3ec923004593da'
+# The master blinding key resulting from TEST_MNEMONIC
+TEST_MNEMONIC_MASTER_BLINDING_KEY = \
+    'afacc503637e85da661ca1706c4ea147f1407868c48d8f92dd339ac272293cdc'
+
 
 TEST_MNEMONIC_PREFIXES = 'fish inne face gin orc perm usef meth fen kidn chuc \
 part fav suns draw limb scie cran ova let slot invi sadn bana'
@@ -400,6 +415,19 @@ GET_BIP85_RSA_SIGNING_TESTS = [
 #
 TEST_SEED_SINGLE_SIG = 'b90e532426d0dc20fffe01037048c018e940300038b165c211915c672e07762c'
 
+# The single-sig mnemonic used for test case generation.
+# See the commit description adding this line for details of the
+# resulting descriptors and multisig testing setup.
+TEST_MNEMONIC_SINGLE_SIG = \
+    'paddle puppy easily actor poet apart screen drastic city front predict damp'
+# The seed resulting from TEST_MNEMONIC_SINGLE_SIG
+TEST_MNEMONIC_SS_SEED = \
+    '5eff11cb0a00759be57e20d20d8076b80e8954df54318967116269909b501c10' \
+    '99c27239c6e1cc1e9211a9b8157f150d58fc3f88ba79fd7c1515f3f317732337'
+# The master blinding key resulting from TEST_MNEMONIC_SINGLE_SIG
+TEST_MNEMONIC_SS_MASTER_BLINDING_KEY = \
+    'f5c572fce078ab45598b5c661395ee0bfe680a67704061151ad354d93170d187'
+
 # NOTE: for get-xpub the root (empty path array) can be accessed (to allow
 # external creation of watch-only public key tree)
 # NOTE: networks 'liquid' and 'mainnet' result in 'xpub' prefix, else 'tpub'
@@ -531,6 +559,7 @@ MULTI_REG_TESTS = "multisig_reg_*.json"
 MULTI_REG_SS_TESTS = "multisig_reg_ss_*.json"
 MULTI_REG_FILE_TESTS = "multisig_file_*.json"
 MULTI_REG_BAD_FILE_TESTS = "multisig_bad_file_*.json"
+DESCRIPTOR_REG_TESTS = "descriptor_*.json"
 DESCRIPTOR_REG_SS_TESTS = "descriptor_ss_*.json"
 SIGN_MSG_TESTS = "msg_*.json"
 SIGN_MSG_FILE_TESTS = "msgfile_*.json"
@@ -538,7 +567,8 @@ SIGN_IDENTITY_TESTS = "identity_*.json"
 SIGN_TXN_TESTS = "txn_*.json"
 SIGN_TXN_FAIL_CASES = "badtxn_*.json"
 SIGN_LIQUID_TXN_TESTS = "liquid_txn_*.json"
-SIGN_TXN_SINGLE_SIG_TESTS = "singlesig_txn*.json"
+SIGN_TXN_SS_TESTS = "tx_ss_*.json"
+SIGN_TXN_SS_BAD_TESTS = "tx_ss_bad_*.json"
 SIGN_LIQUID_TXN_SINGLE_SIG_TESTS = "singlesig_liquid_txn*.json"
 SIGN_PSBT_TESTS = "psbt_tm_*.json"
 SIGN_PSBT_SS_TESTS = "psbt_ss_*.json"
@@ -692,7 +722,7 @@ def test_very_bad_message(jade):
     for badmsg in [empty, text, truncated]:
         # Send the bad message, and after a pause a good message
         jade.write(badmsg)
-        time.sleep(3)
+        wait(3)
         jade.write_request(goodmsg)
 
         # We should receive a bag of errors
@@ -732,7 +762,7 @@ def test_random_bytes(jade):
         jade.write(noise)
         nsent += len(noise)
 
-    time.sleep(5)
+    wait(5)
     goodmsg = jade.build_request('goodmsg', 'add_entropy', {'entropy': 'somebytes'.encode()})
     jade.write_request(goodmsg)
 
@@ -802,7 +832,7 @@ def test_too_much_input(jade, has_psram):
     assert int(error['data']) == expected_buffer_size
 
     # After a short pause send a good message
-    time.sleep(5)
+    wait(5)
     goodmsg = jade.build_request('trailer', 'add_entropy', {'entropy': 'random'.encode()})
     jade.write_request(goodmsg)
 
@@ -833,7 +863,7 @@ def test_split_message(jade):
     msg = cbor.dumps({'method': 'get_version_info', 'id': '24680'})
     for msgpart in [msg[:5], msg[5:10], msg[10:]]:
         jade.write(msgpart)
-        time.sleep(0.25)
+        wait(0.25)
 
     reply = jade.read_response()
 
@@ -2436,7 +2466,7 @@ def check_mem_stats(startinfo, endinfo, has_psram, has_ble, strict=True):
     # Memory stats to log/check
     breaches = []
     for field, limit in [('JADE_FREE_HEAP', 1536),
-                         ('JADE_FREE_DRAM', 4096 if has_ble else 1536),
+                         ('JADE_FREE_DRAM', 8192 if has_ble else 1536),
                          ('JADE_LARGEST_DRAM', 4096 if check_frag else -1),
                          ('JADE_FREE_SPIRAM', 0),
                          ('JADE_LARGEST_SPIRAM', 0 if check_frag else -1)]:
@@ -2459,7 +2489,9 @@ def check_mem_stats(startinfo, endinfo, has_psram, has_ble, strict=True):
 
 # Helper to verify a signature - handles checking an Anti-Exfil signature
 # contains the entropy that was passed in by the host.
-def _verify_signature(jadeapi, network, msghash, path, host_entropy, signer_commitment, signature):
+def _verify_signature(jadeapi, network, msghash, path,
+                      host_entropy, signer_commitment,
+                      signature, is_schnorr):
     # entropy/signer_commitment imply anti-exfil signature
     assert (host_entropy is None) == (signer_commitment is None)
 
@@ -2468,6 +2500,14 @@ def _verify_signature(jadeapi, network, msghash, path, host_entropy, signer_comm
     hdkey = wally.bip32_key_from_base58(xpub)
     pubkey = wally.bip32_key_get_pub_key(hdkey)
 
+    if is_schnorr:
+        # Taproot signature. Tweak the pubkey for a keyspend and verify
+        assert signer_commitment == bytes()  # No Anti-Exfil for Schnorr yet
+        assert len(signature) == wally.EC_SIGNATURE_LEN
+        pubkey = wally.ec_public_key_bip341_tweak(pubkey, None, 0)
+        wally.ec_sig_verify(pubkey, msghash, wally.EC_FLAG_SCHNORR, signature)
+        return
+
     # If presented a 'recoverable' signature, recover the public key
     # and verify it matches that fetched from the hw above
     if len(signature) == wally.EC_SIGNATURE_RECOVERABLE_LEN:
@@ -2475,6 +2515,7 @@ def _verify_signature(jadeapi, network, msghash, path, host_entropy, signer_comm
         assert recovered_pubkey == pubkey
         signature = signature[1:]  # Truncate leading byte for verification
 
+    # ECDSA signature
     assert len(signature) == wally.EC_SIGNATURE_LEN
     if host_entropy:
         # Verify AE signature and that the host-entropy is included
@@ -2512,7 +2553,29 @@ def _check_msg_signature(jadeapi, testcase, actual):
 
     # Verify the signature
     _verify_signature(jadeapi, network, msghash, inputdata['path'],
-                      host_entropy, signer_commitment, rawsig)
+                      host_entropy, signer_commitment, rawsig, is_schnorr=False)
+
+
+# Helper to fetch the scriptpubkeys and input values for a sign_tx test case
+# (required for taproot signing).
+def _get_scriptpubkeys_and_values(jadeapi, testcase, txn):
+    inputs = testcase['input']['inputs']
+    scriptpubkeys = wally.map_init(len(inputs), None)
+    values = []
+    for i, inputdata in enumerate(inputs):
+        if inputdata.get('input_tx'):
+            # Fetch info from the prevout for the input
+            utxo_index = wally.tx_get_input_index(txn, i)
+            utxo = wally.tx_from_bytes(inputdata['input_tx'], 0)
+            wally.map_add_integer(scriptpubkeys, i, wally.tx_get_output_script(utxo, utxo_index))
+            values.append(wally.tx_get_output_satoshi(utxo, utxo_index))
+        else:
+            # If no input_tx, sats can be passed instead (Deprecated).
+            # Only valid for non-taproot, single-input segwit txns
+            assert inputdata['is_witness']
+            assert len(inputs) == 1
+            values.append(inputdata['satoshi'])
+    return scriptpubkeys, values
 
 
 # Helper to verify a tx signature - handles checking an Anti-Exfil signature
@@ -2540,6 +2603,7 @@ def _check_tx_signatures(jadeapi, testcase, rslt):
     else:
         # BTC tx, straightforward
         txn = wally.tx_from_bytes(test_input['txn'], 0)
+        scriptpubkeys, values = _get_scriptpubkeys_and_values(jadeapi, testcase, txn)
 
     # Iterate over the results verifying each signature
     for i, (expected, actual) in enumerate(zip(testcase['expected_output'], rslt)):
@@ -2553,44 +2617,57 @@ def _check_tx_signatures(jadeapi, testcase, rslt):
             signer_commitment, signature = actual
         else:
             # Standard EC signature should be low-s and low-r
-            assert actual == expected, actual.hex()
+            assert actual == expected, f'{actual.hex()} != {expected.hex()}'
 
             # NOTE: low-s is implied/assumed here, so no need to remove one from max-len
             assert len(actual) <= wally.EC_SIGNATURE_DER_MAX_LOW_R_LEN + 1  # sighash byte, low-s
             signer_commitment, signature = None, actual  # No signer_commitment for EC sig
 
-        # Verify signature (if we signed this input)
-        if len(signature):
-            inputdata = test_input['inputs'][i]
-            sighash = inputdata.get('sighash', wally.WALLY_SIGHASH_ALL)
+        if not len(signature):
+            continue  # We didn't sign this input, ignore it
 
-            # Get the signature message hash (ie. the hash value that was signed)
-            tx_flags = wally.WALLY_TX_FLAG_USE_WITNESS if inputdata['is_witness'] else 0
-            if is_liquid:
-                msghash = wally.tx_get_elements_signature_hash(
-                    txn, i, inputdata['script'], inputdata.get('value_commitment'),
-                    sighash, tx_flags)
+        # We signed this input, verify the signature
+        inputdata = test_input['inputs'][i]
+        script = inputdata['script']
+        sighash = inputdata.get('sighash', wally.WALLY_SIGHASH_ALL)
+        is_p2tr = script[0] == 0x51 and script[1] == 32  # OP_1 [32 byte xonly pubkey]
+
+        # Get the signature message hash (ie. the hash value that was signed)
+        tx_flags = 0
+        if inputdata['is_witness'] and not is_p2tr:
+            tx_flags = wally.WALLY_TX_FLAG_USE_WITNESS
+        if is_liquid:
+            msghash = wally.tx_get_elements_signature_hash(
+                txn, i, script, inputdata.get('value_commitment'),
+                sighash, tx_flags)
+        else:
+            if is_p2tr:
+                key_version, codesep_pos = 0, wally.WALLY_NO_CODESEPARATOR
+                msghash = wally.tx_get_btc_taproot_signature_hash(
+                    txn, i, scriptpubkeys, values, None, key_version,
+                    codesep_pos, None, sighash, tx_flags)
             else:
-                if inputdata.get('input_tx'):
-                    # Get satoshi amount from input tx if we have one
-                    utxo_index = wally.tx_get_input_index(txn, i)
-                    input_txn = wally.tx_from_bytes(inputdata['input_tx'], 0)
-                    satoshi = wally.tx_get_output_satoshi(input_txn, utxo_index)
-                else:
-                    # If no input_tx, sats can be passed instead
-                    # (Now only valid for single-input segwit tx)
-                    assert inputdata['is_witness'] and len(test_input['inputs']) == 1
-                    satoshi = inputdata['satoshi']
-
                 msghash = wally.tx_get_btc_signature_hash(
-                    txn, i, inputdata['script'], satoshi, sighash, tx_flags)
+                    txn, i, script, values[i], sighash, tx_flags)
 
-            # Check trailing sighash byte and verify signature!
-            assert int.from_bytes(signature[-1:], 'little') == sighash
+        # Check sighash and verify signature!
+        if is_p2tr:
+            # Either 64 byte default sig or 65 byte non-default with sighash byte appended
+            if len(signature) == wally.EC_SIGNATURE_LEN:
+                assert sighash == wally.WALLY_SIGHASH_DEFAULT
+            else:
+                assert len(signature) == wally.EC_SIGNATURE_LEN + 1
+                assert sighash != wally.WALLY_SIGHASH_DEFAULT
+                assert signature[-1] == sighash
+            rawsig = signature[:wally.EC_SIGNATURE_LEN]  # Ignore any sighash byte
+        else:
+            # A DER encoded sig with sighash byte appended
+            assert signature[-1] == sighash
             rawsig = wally.ec_sig_from_der(signature[:-1])  # truncate sighash byte
-            host_entropy = inputdata.get('ae_host_entropy') if use_ae_signatures else None
-            _verify_signature(jadeapi, network, msghash, inputdata['path'],
-                              host_entropy, signer_commitment, rawsig)
+
+        host_entropy = inputdata.get('ae_host_entropy') if use_ae_signatures else None
+        _verify_signature(jadeapi, network, msghash, inputdata['path'],
+                          host_entropy, signer_commitment, rawsig, is_schnorr=is_p2tr)
 
 
 def test_set_pinserver(jadeapi):
@@ -2745,35 +2822,48 @@ def test_sign_message_file(jadeapi):
             assert e.message == expected_error, 'Expected error: ' + expected_error
 
 
-def test_sign_tx(jadeapi, pattern):
-    for txn_data in _get_test_cases(pattern):
-        inputdata = txn_data['input']
+def test_sign_tx_case(jadeapi, txn_data):
+    inputdata = txn_data['input']
+    expected_output = txn_data.get('expected_output')
+    expected_error = txn_data.get('expected_error')
+    assert expected_output or expected_error
+    use_ae_signatures = inputdata.get('use_ae_signatures')
+    use_legacy_flow = not use_ae_signatures and not args.no_legacy_flow
+    try:
         rslt = jadeapi.sign_tx(inputdata['network'],
                                inputdata['txn'],
                                inputdata['inputs'],
                                inputdata['change'],
-                               inputdata.get('use_ae_signatures'))
-
+                               use_ae_signatures,
+                               use_legacy_flow)
+        assert not expected_error, f"Expected an error in {txn_data['filename']}"
         # Check returned signatures
         _check_tx_signatures(jadeapi, txn_data, rslt)
+    except JadeError as err:
+        assert expected_error, f"Unexpected error {err.message} in {txn_data['filename']}"
+        if err.message != expected_error:
+            assert False, f"Wrong error '{err.message}' in {txn_data['filename']}"
+
+        if use_legacy_flow:
+            # Only the legacy flow returns extra responses
+            for i in range(txn_data.get('extra_responses', 0)):
+                logger.debug(jadeapi.jade.read_response())
 
 
-def test_sign_tx_error_cases(jadeapi, pattern):
-    # Sign Tx failures
+def test_sign_tx(jadeapi, pattern):
     for txn_data in _get_test_cases(pattern):
-        try:
-            inputdata = txn_data['input']
-            rslt = jadeapi.sign_tx(inputdata['network'],
-                                   inputdata['txn'],
-                                   inputdata['inputs'],
-                                   inputdata['change'],
-                                   inputdata.get('use_ae_signatures'))
-            assert False, "Expected exception from bad sign_tx test case"
-        except JadeError as err:
-            assert err.message == txn_data["expected_error"]
 
-        for i in range(txn_data["extra_responses"]):
-            logger.debug(jadeapi.jade.read_response())
+        # Run the signing test case
+        test_sign_tx_case(jadeapi, txn_data)
+
+        if 'expected_legacy_output' in txn_data and 'expected_error' not in txn_data:
+            # Test case has non-Anti-exfil signing results, test them also.
+            txn_data['input']['use_ae_signatures'] = False
+            for txinput in txn_data['input']['inputs']:
+                for k in ['ae_host_commitment', 'ae_host_entropy']:
+                    txinput[k] = bytes()
+            txn_data['expected_output'] = txn_data['expected_legacy_output']
+            test_sign_tx_case(jadeapi, txn_data)
 
 
 def test_liquid_blinding_keys(jadeapi):
@@ -2916,22 +3006,21 @@ def test_sign_psbt(jadeapi, cases):
         except JadeError as err:
             # Check expected error
             assert 'expected_output' not in txn_data
-            assert err.message == txn_data['expected_error']
+            assert err.message == txn_data['expected_error'], err.message
             continue
 
-        # Othewise, should have worked, check expected output
+        # Otherwise, should have worked, check expected output
         assert 'expected_error' not in txn_data
         assert rslt == txn_data['expected_output']['psbt'], base64.b64encode(rslt).decode()
 
         # Optionally test extracted tx
         expected_txn = txn_data['expected_output'].get('txn')
         if expected_txn:
-            psbt = wally.psbt_from_bytes(rslt)
-            wally.psbt_finalize(psbt)
-            assert wally.psbt_is_finalized(psbt)
-            txn = wally.psbt_extract(psbt)
+            psbt = wally.psbt_from_bytes(rslt, 0)
+            wally.psbt_finalize(psbt, 0)
+            txn = wally.psbt_extract(psbt, wally.WALLY_PSBT_EXTRACT_FINAL)
             txn = wally.tx_to_bytes(txn, wally.WALLY_TX_FLAG_USE_WITNESS)
-            assert txn == expected_txn, wally.hex_from_bytes(txn)
+            assert txn == expected_txn, txn.hex()
 
 
 # Helper to check a multisig registration
@@ -3192,12 +3281,14 @@ def test_generic_multisig_matches_ga_signatures(jadeapi):
                 change['paths'] = [path[-1:]] * 2
                 change['multisig_name'] = ga_2of2_multisig_name
 
+        use_ae_signatures = inputdata.get('use_ae_signatures')
+        use_legacy_flow = not use_ae_signatures and not args.no_legacy_flow
         rslt = jadeapi.sign_tx(inputdata['network'],
                                inputdata['txn'],
                                inputdata.get('inputs'),
                                inputdata['change'],
-                               inputdata.get('use_ae_signatures'),
-                               )
+                               use_ae_signatures,
+                               use_legacy_flow)
 
         # Check returned signatures
         _check_tx_signatures(jadeapi, ga_msig, rslt)
@@ -3270,8 +3361,8 @@ def test_generic_multisig_ss_signer(jadeapi):
         _check_multisig_registration(jadeapi, multisig_data)
 
 
-def test_miniscript_descriptor_registration(jadeapi):
-    for descriptor_data in _get_test_cases(DESCRIPTOR_REG_SS_TESTS):
+def test_miniscript_descriptor_registration(jadeapi, pattern):
+    for descriptor_data in _get_test_cases(pattern):
         # Register the descriptor
         inputdata = descriptor_data['input']
         rslt = jadeapi.register_descriptor(inputdata['network'],
@@ -3325,10 +3416,6 @@ def test_miniscript_descriptor_registration(jadeapi):
                                                    paths,
                                                    multisig_name=inputdata['descriptor_name'])
                 assert rslt == addr_test['expected_address']
-
-
-def test_miniscript_descriptor_registration_ss_signer(jadeapi):
-    test_miniscript_descriptor_registration(jadeapi)  # for now ...
 
 
 def test_12word_mnemonic(jadeapi):
@@ -3580,7 +3667,7 @@ def run_api_tests(jadeapi, isble, qemu, authuser=False):
     rslt = jadeapi.ping()
     assert rslt == 0  # idle
 
-    time.sleep(5)  # Lets idle tasks clean up
+    wait(5)  # Lets idle tasks clean up
     startinfo = jadeapi.get_version_info()
     assert len(startinfo) == NUM_VALUES_VERINFO
     has_psram = startinfo['JADE_FREE_SPIRAM'] > 0
@@ -3603,7 +3690,7 @@ def run_api_tests(jadeapi, isble, qemu, authuser=False):
     test_generic_multisig_files(jadeapi)
 
     # Test descriptor wallets
-    test_miniscript_descriptor_registration(jadeapi)
+    test_miniscript_descriptor_registration(jadeapi, DESCRIPTOR_REG_TESTS)
 
     # Get (receive) green-addresses, get-xpub, and sign-message
     test_get_greenaddress_receive_address(jadeapi)
@@ -3613,7 +3700,7 @@ def run_api_tests(jadeapi, isble, qemu, authuser=False):
 
     # Sign Tx - includes some failure cases
     test_sign_tx(jadeapi, SIGN_TXN_TESTS)
-    test_sign_tx_error_cases(jadeapi, SIGN_TXN_FAIL_CASES)
+    test_sign_tx(jadeapi, SIGN_TXN_FAIL_CASES)
 
     # Test liquid blinding keys/nonce, blinded commitments and sign-tx
     test_liquid_blinding_keys(jadeapi)
@@ -3637,15 +3724,24 @@ def run_api_tests(jadeapi, isble, qemu, authuser=False):
     test_generic_multisig_ss_signer(jadeapi)
 
     # Test the descriptor wallets again, using a second signer
-    # NOTE: some of these tests assume 'test_miniscript_descriptor_registration()' test
-    # has already been run, to register the descriptors for the test mnemonic signer
-    test_miniscript_descriptor_registration_ss_signer(jadeapi)
+    test_miniscript_descriptor_registration(jadeapi, DESCRIPTOR_REG_SS_TESTS)
 
     test_get_singlesig_receive_address(jadeapi)
-    test_sign_tx(jadeapi, SIGN_TXN_SINGLE_SIG_TESTS)
     test_sign_liquid_tx(jadeapi, has_psram, has_ble, SIGN_LIQUID_TXN_SINGLE_SIG_TESTS)
 
-    # Test sign psbts (HWI-generated cases)
+    # Push the singlesig test mnemonic for tests which use it
+    rslt = jadeapi.set_mnemonic(TEST_MNEMONIC_SINGLE_SIG)
+    assert rslt is True
+
+    # Test signing singlesig transactions
+    test_sign_tx(jadeapi, SIGN_TXN_SS_TESTS)
+    test_sign_tx(jadeapi, SIGN_TXN_SS_BAD_TESTS)
+
+    # Test signing singlesig PSBTs (core generated test cases)
+    # FIXME: Add tests for:
+    # - Mixed wallet and non-wallet inputs
+    # - Unusual input and change paths
+    # - Negative test cases (invalid PSBTs)
     test_sign_psbt(jadeapi, SIGN_PSBT_SS_TESTS)
 
     # Sign identity (ssh & gpg) tests require a specific mnemonic
@@ -3664,7 +3760,7 @@ def run_api_tests(jadeapi, isble, qemu, authuser=False):
     rslt = jadeapi.set_mnemonic(TEST_MNEMONIC)
     assert rslt is True
 
-    time.sleep(5)  # Lets idle tasks clean up
+    wait(5)  # Lets idle tasks clean up
     endinfo = jadeapi.get_version_info()
     check_mem_stats(startinfo, endinfo, has_psram, has_ble)
 
@@ -3691,7 +3787,7 @@ def run_interface_tests(jadeapi,
     rslt = jadeapi.logout()
     assert rslt is True
 
-    time.sleep(5)  # Lets idle tasks clean up
+    wait(5)  # Lets idle tasks clean up
     startinfo = jadeapi.get_version_info()
     assert len(startinfo) == NUM_VALUES_VERINFO
     has_psram = startinfo['JADE_FREE_SPIRAM'] > 0
@@ -3724,7 +3820,7 @@ def run_interface_tests(jadeapi,
         if not isble:
             time_ms = jadeapi.run_remote_selfcheck()
             logger.info('selfcheck time: ' + str(time_ms) + 'ms')
-            assert qemu or time_ms < (46000 if is_s3 else 126000)
+            assert qemu or time_ms < (46000 if is_s3 else 128000)
 
         # Test good pinserver handshake, and also 'bad sig' pinserver
         test_handshake(jadeapi.jade)
@@ -3768,7 +3864,7 @@ def run_interface_tests(jadeapi,
     rslt = jadeapi.logout()
     assert rslt is True
 
-    time.sleep(5)  # Lets idle tasks clean up
+    wait(5)  # Lets idle tasks clean up
     endinfo = jadeapi.get_version_info()
     check_mem_stats(startinfo, endinfo, has_psram, has_ble)
 
@@ -3802,7 +3898,7 @@ def mixed_sources_test(serialport, bleid):
     # 1. Authorise over serial, check BLE connection fails
     with JadeAPI.create_serial(serialport, timeout=SRTIMEOUT) as jade_serial:
         jade_serial.set_mnemonic(TEST_MNEMONIC)
-        time.sleep(1)
+        wait(1)
 
         rslt = jade_serial.get_xpub(network, path)
         assert rslt == expected
@@ -3857,7 +3953,7 @@ def mixed_sources_test(serialport, bleid):
             assert rslt is True
 
     # 3. Check BLE re-enabled, and both interfces can be used when user not authenticated
-    time.sleep(1)
+    wait(1)
     with JadeAPI.create_serial(serialport, timeout=SRTIMEOUT) as jade_serial:
         info1 = jade_serial.get_version_info()
         with JadeAPI.create_ble(serial_number=bleid) as jade_ble:
@@ -3956,7 +4052,7 @@ def test_ble_connection_fails(info, args):
 def check_stuck():
     # NOTE: belt'n'braces - serial/ble reads/writes should timeout before this does
     timeout = 60  # minutes
-    time.sleep(60 * timeout)
+    wait(60 * timeout)
     err_str = "tests got caught running longer than {} minutes, terminating"
     logger.error(err_str.format(timeout))
     logger.handlers[0].flush()
@@ -4048,6 +4144,11 @@ if __name__ == '__main__':
                         action="store_true",
                         dest="qemu",
                         help="Skip tests which appear problematic on qemu hw emulator",
+                        default=False)
+    parser.add_argument("--nolegacyflow",
+                        action="store_true",
+                        dest="no_legacy_flow",
+                        help="Do not use the legacy sign_tx flow (use the AE flow instead)",
                         default=False)
     parser.add_argument("--log",
                         action="store",

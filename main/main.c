@@ -1,3 +1,4 @@
+#include <esp_app_desc.h>
 #include <esp_chip_info.h>
 #include <esp_efuse.h>
 #include <esp_event.h>
@@ -38,10 +39,7 @@
 #include "qemu_tcp.h"
 #endif
 
-#ifdef CONFIG_BT_ENABLED
 #include "ble/ble.h"
-#endif
-
 #include "idletimer.h"
 #include "power.h"
 #include "smoketest.h"
