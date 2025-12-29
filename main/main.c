@@ -46,6 +46,7 @@
 #include "power.h"
 #include "smoketest.h"
 #include "storage.h"
+#include "ur_benchmark.h"
 #include "wallet.h"
 
 // Running partition/fw info & chip info, fetched once at boot
@@ -297,6 +298,10 @@ void app_main(void)
     validate_running_image();
     boot_process();
     sensitive_assert_empty();
+
+    // Run UR decoder benchmark (comparing esp32_bc-ur vs cUR)
+    run_ur_benchmark();
+
 #ifndef CONFIG_JADE_QA
     start_dashboard();
 #else
