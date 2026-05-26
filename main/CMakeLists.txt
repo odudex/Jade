@@ -22,6 +22,8 @@ else()
     list(APPEND logo_files ${PROJECT_DIR}/logo/statusbar_small.bin.gz)
 endif()
 
+list(APPEND logo_files ${PROJECT_DIR}/logo/shrincs.bin.gz)
+
 if (CONFIG_IDF_TARGET_ESP32S3)
     set(usbdir "usbhmsc")
 endif()

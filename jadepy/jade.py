@@ -1313,6 +1313,10 @@ class JadeAPI:
         """
         params = {'message_file': message_file}
         return self._jadeRpc('sign_message', params)
+    
+    def sign_shrincs(self, path, message):
+        params = {'path': path, 'message': message}
+        return self._jadeRpc('sign_shrincs', params)
 
     def get_bip85_pubkey(self, key_type, key_bits, index):
         """

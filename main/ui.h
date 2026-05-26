@@ -99,6 +99,21 @@ typedef struct {
     uint8_t percent_last_value;
 } progress_bar_t;
 
+#define SHRINCS_TRACK_LEN 10
+
+typedef struct {
+    Picture* shrimp_pic;
+    gui_view_node_t* slots[SHRINCS_TRACK_LEN];
+    gui_view_node_t* food[SHRINCS_TRACK_LEN];
+    gui_view_node_t* shrimp_slots[SHRINCS_TRACK_LEN];
+    gui_view_node_t* pcnt;
+    uint8_t last_pos;
+} shrincs_progress_t;
+
+void free_shrincs_progress(shrincs_progress_t* sp);
+gui_activity_t* make_shrincs_progress_activity(const char* title, const char* message, shrincs_progress_t* sp);
+void update_shrincs_progress(shrincs_progress_t* sp, size_t total, size_t current);
+
 // Button bars/menus etc.
 typedef enum { UI_ROW, UI_COLUMN } ui_button_layout_t;
 
