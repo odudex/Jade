@@ -50,6 +50,11 @@ struct slh_var_s
   /* precomputed values */
   sha2_256_t sha2_256_pk_seed;
   sha2_512_t sha2_512_pk_seed;
+
+  slh_progress_cb prog_cb;
+  void           *prog_ud;
+  uint32_t        prog_done;
+  uint32_t        prog_total;
 };
 
 /* === Lower-level functions */

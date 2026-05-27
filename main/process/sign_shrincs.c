@@ -44,12 +44,10 @@ void sign_shrincs_process(void* process_ptr)
         snprintf(msg_display, sizeof(msg_display), "%.*s...", (int)sizeof(msg_display) - 4, message);
     }
 
-#ifdef CONFIG_DEBUG_UNATTENDED_CI
     if (!show_sign_shrincs_activity(msg_display)) {
         jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
         goto cleanup;
     }
-#endif
 
     size_t written = 0;
 

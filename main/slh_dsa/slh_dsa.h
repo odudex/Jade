@@ -16,6 +16,7 @@ extern "C"
 
 #include <stddef.h>
 #include <stdint.h>
+#include "plat_local.h"
 
 #ifndef _SLH_PARAM_H_
   typedef struct slh_param_s slh_param_t;
@@ -65,7 +66,7 @@ extern "C"
 
   size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz,
                   const uint8_t *ctx, size_t ctx_sz, const uint8_t *sk,
-                  const uint8_t *addrnd, const slh_param_t *prm);
+                  const uint8_t *addrnd, const slh_param_t *prm, slh_progress_cb cb, void *ud);
 
   /* Verify an SLH-DSA signature. */
   /* return 0 on verification failure, 1 on success */

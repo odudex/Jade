@@ -262,5 +262,7 @@ static SLH_INLINE uint64_t rev8_be64(uint64_t x)
 }
 #endif
 
+typedef void (*slh_progress_cb)(uint16_t current, void *userdata);
+
 /* _PLAT_LOCAL_H_ */
 #endif

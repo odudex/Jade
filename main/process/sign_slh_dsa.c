@@ -8,6 +8,12 @@
 #include "../slh_dsa/slh_dsa.h"
 #include "../slh_dsa/slh_param.h"
 
+static void slh_dsa_progress_adapter(uint16_t current, void* userdata)
+{
+    progress_bar_t* pb = (progress_bar_t*)userdata;
+    update_progress_bar(pb, 1000, current);
+}
+
 void sign_slh_dsa_process(void* process_ptr)
 {
     jade_process_t* process = process_ptr;
@@ -37,12 +43,10 @@ void sign_slh_dsa_process(void* process_ptr)
         snprintf(msg_display, sizeof(msg_display), "%.*s...", (int)sizeof(msg_display) - 4, message);
     }
 
-#ifdef CONFIG_DEBUG_UNATTENDED_CI
     if (!show_sign_shrincs_activity(msg_display)) {
         jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
         goto cleanup;
     }
-#endif
 
     size_t written = 0;
 
@@ -80,7 +84,7 @@ void sign_slh_dsa_process(void* process_ptr)
     uint32_t sig_len = slh_sig_sz(&prm); 
     sig_output = JADE_MALLOC(sig_len);
 
-    slh_sign(sig_output, (const unsigned char*)message, msg_len, NULL, 0, sk_bytes, NULL, &prm);
+    slh_sign(sig_output, (const unsigned char*)message, msg_len, NULL, 0, sk_bytes, NULL, &prm, slh_dsa_progress_adapter, &pb);
 
     jade_process_reply_to_message_bytes(&process->ctx, sig_output, sig_len);
     JADE_LOGI("Success");

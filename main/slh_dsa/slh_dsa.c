@@ -295,6 +295,12 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
   adrs_set_tree_address(var, i_tree);
   sx_sz = slhi_xmss_sign(var, sh, m, i_leaf);
 
+  if (var->prog_cb) {
+    var->prog_done++;
+    var->prog_cb((uint16_t)((uint64_t)var->prog_done * 1000 / var->prog_total),
+                 var->prog_ud);
+  }
+
   for (j = 1; j < prm->d; j++)
   {
     slhi_xmss_pk_from_sig(var, m, i_leaf, sh, m);
@@ -305,6 +311,12 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
     adrs_set_layer_address(var, j);
     adrs_set_tree_address(var, i_tree);
     slhi_xmss_sign(var, sh, m, i_leaf);
+
+    if (var->prog_cb) {
+      var->prog_done++;
+      var->prog_cb((uint16_t)((uint64_t)var->prog_done * 1000 / var->prog_total),
+                   var->prog_ud);
+    }
   }
 
   return sx_sz * prm->d;
@@ -608,7 +620,7 @@ size_t slh_sign_internal(uint8_t *sig, const uint8_t *m, size_t m_sz,
 
 size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz, const uint8_t *ctx,
                 size_t ctx_sz, const uint8_t *sk, const uint8_t *addrnd,
-                const slh_param_t *prm)
+                const slh_param_t *prm, slh_progress_cb cb, void *ud)
 {
   slh_var_t var;
   const uint8_t *opt_rand;
@@ -622,6 +634,8 @@ size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz, const uint8_t *ctx,
 
   /* set up secret key etc */
   prm->mk_var(&var, NULL, sk, prm);
+  var.prog_cb = cb; var.prog_ud = ud;
+  var.prog_done = 0; var.prog_total = prm->d;
 
   if (addrnd != NULL)
   {
