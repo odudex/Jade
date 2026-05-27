@@ -24,7 +24,7 @@
 #ifndef CONFIG_RETURN_CAMERA_IMAGES
 // This should be the size of the largest valid output message.
 // Used by ble and serial when sending messages. (pinserver handshake)
-#define MAX_OUTPUT_MSG_SIZE (1024 * 3)
+#define MAX_OUTPUT_MSG_SIZE (1024 * 8)
 #else
 // When CONFIG_RETURN_CAMERA_IMAGES is defined we allocate a larger
 // buffer as image sizes are much larger than standard messges.

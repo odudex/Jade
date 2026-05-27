@@ -5,20 +5,13 @@
 #include "../utils/cbor_rpc.h"
 #include "../wallet.h"
 #include "process_utils.h"
-#include "../shrincs/shrincs.h"
+#include "../slh_dsa/slh_dsa.h"
+#include "../slh_dsa/slh_param.h"
 
-bool show_sign_shrincs_activity(const char* message);
-
-static void jade_progress_adapter(uint16_t current, void* userdata)
-{
-    shrincs_progress_t* sp = (shrincs_progress_t*)userdata;
-    update_shrincs_progress(sp, 1000, current);
-}
-
-void sign_shrincs_process(void* process_ptr)
+void sign_slh_dsa_process(void* process_ptr)
 {
     jade_process_t* process = process_ptr;
-    ASSERT_CURRENT_MESSAGE(process, "sign_shrincs");
+    ASSERT_CURRENT_MESSAGE(process, "sign_slh_dsa");
     ASSERT_KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process);
     GET_MSG_PARAMS(process);
 
@@ -32,8 +25,8 @@ void sign_shrincs_process(void* process_ptr)
         goto cleanup;
     }
 
-    uint64_t swn;
-    rpc_get_uint64_t("swn", &params, &swn);
+    bool is_standart;
+    rpc_get_boolean("is_standart", &params, &is_standart);
 
     // rpc_get_bip32_path("path", &params, path, max_path_len, &path_len);
 
@@ -53,38 +46,41 @@ void sign_shrincs_process(void* process_ptr)
 
     size_t written = 0;
 
-    shrincs_progress_t shrincs = {};
-    gui_activity_t* act = make_shrincs_progress_activity("Signing", "Please wait", &shrincs);
+    progress_bar_t pb = {};
+    gui_activity_t* act = make_progress_bar_activity("Signing", "Please wait", &pb);
     gui_set_current_activity(act);
+    
+    slh_param_t prm;
+    uint8_t sk_bytes[64];
+    int ret;
+    if (is_standart)
+    { 
+        prm = slh_dsa_sha2_128s;
+        ret = wally_hex_to_bytes("0fac4b7b966f29c3ecff665eb4ead66eee253a1a3d501c09d2cc0a7a5afad4747906277af176f5e3cf644f591fb353c5d12447a500c02be7d4c86bd1e29a84ab", sk_bytes, sizeof(sk_bytes), &written);
+    }
+    else
+    {
+        memcpy(&prm, &slh_dsa_sha2_128s, sizeof(slh_param_t));
+        prm.alg_id = "custom-slh-dsa";
+        prm.h = 45;  
+        prm.d = 5;  
+        prm.hp = 9;
+        prm.a = 13;   
+        prm.k = 10;
+        prm.lg_w = 4;
 
-    uint8_t sk_bytes[96];
-    int ret = wally_hex_to_bytes("0517400a7d4f5a532d4f34b077182caf1a79e406404e29a7feed94aa546330ac00ae2c282f33b319d83b705b4b5487c618311f77a5283cf39aabaf35dc3dfd79918fd17d889f34eb76a99a0c93a2015eda5a08dc47d1e05d0d4d816f72e78e27", sk_bytes, sizeof(sk_bytes), &written);
+        ret = wally_hex_to_bytes("e39c0e870f7e0270c5e8bc4ecb8447f59acf02c625e6da1e2018140412e2c8d69fc70fec2531104d439e8409a144308e99a230a89e6ccc8fd40855d7f519029d", sk_bytes, sizeof(sk_bytes), &written);
+    }
 
-    if (ret != WALLY_OK || written != 96) {
+    if (ret != WALLY_OK || written != 64) {
         jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Sign failed");
         goto cleanup;
     }
 
-    State state;
-    state.q = 0;
-    state.valid = 1;
-
-    const size_t sig_len = N + WOTS_SIGN_LEN + (state.q + 1) * N;
-
-    SecretKey sk;
-    memcpy(sk.seed,     sk_bytes,         N);
-    memcpy(sk.prf,      sk_bytes + N,     N);
-    memcpy(sk.sf,       sk_bytes + N * 2, N);
-    memcpy(sk.sl,       sk_bytes + N * 3, N);
-    memcpy(sk.pk.seed,  sk_bytes + N * 4, N);
-    memcpy(sk.pk.root,  sk_bytes + N * 5, N);
-
+    uint32_t sig_len = slh_sig_sz(&prm); 
     sig_output = JADE_MALLOC(sig_len);
 
-    if (!shrincs_sign_stateful((const uint8_t*)message, msg_len, &sk, &state, swn, sig_output, jade_progress_adapter, &shrincs)) {
-        jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Sign failed");
-        goto cleanup;
-    }
+    slh_sign(sig_output, (const unsigned char*)message, msg_len, NULL, 0, sk_bytes, NULL, &prm);
 
     jade_process_reply_to_message_bytes(&process->ctx, sig_output, sig_len);
     JADE_LOGI("Success");
@@ -94,7 +90,6 @@ cleanup:
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
     if (sig_output) free(sig_output);
 #pragma GCC diagnostic pop
-    free_shrincs_progress(&shrincs);
     return;
 }
 #endif // AMALGAMATED_BUILD

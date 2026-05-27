@@ -99,7 +99,7 @@ void wots_pk_gen(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs, ui
     sha256_finalize(&ctx, out);
 }
 
-uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t keypair, uint8_t* msg_out, uint32_t sf, shrincs_progress_cb cb, void *cb_ud, uint16_t prog_start, uint16_t prog_end)
+uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t keypair, uint8_t* msg_out, uint32_t sf, uint32_t swn, shrincs_progress_cb cb, void *cb_ud, uint16_t prog_start, uint16_t prog_end)
 {
     if (sf)
     {
@@ -145,7 +145,7 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
         uint32_t sum = 0;
         for (uint32_t i = 0; i < L; i++) sum += tmp_msg[i];
         
-        if (sum == SWN) 
+        if (sum == swn) 
         {
             memcpy(msg_out, tmp_msg, L);
             return ctr;
@@ -155,7 +155,7 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
     return 0; // What should we return here?
 }
 
-uint32_t wots_digest(const uint8_t* message, uint32_t message_len, SHA256_CTX* hash_ctx, uint32_t ctr, uint8_t* adrs, uint32_t keypair, uint8_t* msg_out, uint32_t sf)
+uint32_t wots_digest(const uint8_t* message, uint32_t message_len, SHA256_CTX* hash_ctx, uint32_t ctr, uint8_t* adrs, uint32_t keypair, uint8_t* msg_out, uint32_t sf, uint32_t swn)
 {
     if (sf)
     {
@@ -186,11 +186,10 @@ uint32_t wots_digest(const uint8_t* message, uint32_t message_len, SHA256_CTX* h
     uint32_t sum = 0;
     for (uint32_t i = 0; i < L; i++) sum += msg_out[i];
 
-    return sum == SWN;
-    // return 1;
+    return sum == swn;
 }
 
-void wots_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_seed, const uint8_t* sk_prf, const uint8_t* pk_seed, const uint8_t* pk_root, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t keypair, uint32_t sf, uint32_t is_internal, uint8_t* out, shrincs_progress_cb cb, void *cb_ud, uint16_t prog_start, uint16_t prog_end)
+void wots_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_seed, const uint8_t* sk_prf, const uint8_t* pk_seed, const uint8_t* pk_root, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t keypair, uint32_t sf, uint32_t is_internal, uint32_t swn, uint8_t* out, shrincs_progress_cb cb, void *cb_ud, uint16_t prog_start, uint16_t prog_end)
 {
     uint32_t WOTS_HASH, WOTS_PRF_TYPE, H_MSG_TYPE;
     if (sf)
@@ -233,7 +232,7 @@ void wots_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_s
 
     uint8_t msg[L];
     uint16_t mid = (uint16_t)((uint32_t)prog_start + ((uint32_t)(prog_end - prog_start) * 8 / 10));
-    uint32_t ctr = wots_grind(digest, N, hash_ctx, adrs, keypair, msg, sf, cb, cb_ud, prog_start, mid);
+    uint32_t ctr = wots_grind(digest, N, hash_ctx, adrs, keypair, msg, sf, swn, cb, cb_ud, prog_start, mid);
     cb(mid, cb_ud);
 
     memcpy(out, r, R_LEN);
@@ -273,7 +272,7 @@ void wots_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_s
     }
 }
 
-uint32_t wots_pk_from_sig(const uint8_t* sig, const uint8_t* message, uint32_t message_len, const uint8_t* pk_root, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t keypair, uint32_t sf, uint32_t is_internal, uint8_t* out)
+uint32_t wots_pk_from_sig(const uint8_t* sig, const uint8_t* message, uint32_t message_len, const uint8_t* pk_root, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t keypair, uint32_t sf, uint32_t is_internal, uint32_t swn, uint8_t* out)
 {
     uint32_t WOTS_HASH, WOTS_PK, H_MSG_TYPE;
     if (sf)
@@ -318,7 +317,7 @@ uint32_t wots_pk_from_sig(const uint8_t* sig, const uint8_t* message, uint32_t m
     }
 
     uint8_t msg[L];
-    uint32_t valid = wots_digest(digest, N, hash_ctx, ctr, adrs, keypair, msg, sf);
+    uint32_t valid = wots_digest(digest, N, hash_ctx, ctr, adrs, keypair, msg, sf, swn);
 
     if (!valid)
     {

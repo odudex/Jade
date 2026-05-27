@@ -33,11 +33,9 @@ void shrincs_key_gen(PublicKey* out_pk, SecretKey* out_sk, State* out_state);
 
 void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, State* out_state);
 
-uint32_t shrincs_sign_stateful(const uint8_t* message, uint32_t message_len, SecretKey* sk, State* state, uint8_t* out,
-                               shrincs_progress_cb cb, void *cb_userdata);
+uint32_t shrincs_sign_stateful(const uint8_t* message, uint32_t message_len, SecretKey* sk, State* state, uint32_t swn, uint8_t* out, shrincs_progress_cb cb, void *cb_userdata);
 
-uint32_t shrincs_sign_stateless(const uint8_t* message, uint32_t message_len, SecretKey* sk, uint8_t* out,
-                                shrincs_progress_cb cb, void *cb_userdata);
+uint32_t shrincs_sign_stateless(const uint8_t* message, uint32_t message_len, SecretKey* sk, uint32_t swn, uint8_t* out, shrincs_progress_cb cb, void *cb_userdata);
 
 uint32_t shrincs_verify_stateful(const uint8_t* message, uint32_t message_len, const uint8_t* sig, uint32_t sig_len, PublicKey* pk);
 

@@ -78,11 +78,11 @@ void uxmss_auth_path(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs
     }
 }
 
-void uxmss_pk_from_sig(const uint8_t* wots_sig, const uint8_t* auth, const uint8_t* message, uint32_t message_len, const uint8_t* pk_root, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t q, uint8_t* out)
+void uxmss_pk_from_sig(const uint8_t* wots_sig, const uint8_t* auth, const uint8_t* message, uint32_t message_len, const uint8_t* pk_root, SHA256_CTX* hash_ctx, uint8_t* adrs, uint32_t q, uint32_t swn, uint8_t* out)
 {
     setLayerAddress(adrs, 0);
     setTreeAddress(adrs, 0, 0);
-    wots_pk_from_sig(wots_sig, message, message_len, pk_root, hash_ctx, adrs, q, 1, 0, out);
+    wots_pk_from_sig(wots_sig, message, message_len, pk_root, hash_ctx, adrs, q, 1, 0, swn, out);
 
     setTypeAndClear(adrs, SF_TREE);
     if (q <= HSF) 
@@ -133,11 +133,11 @@ void uxmss_pk_from_sig(const uint8_t* wots_sig, const uint8_t* auth, const uint8
     }
 }
 
-void uxmss_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_seed, const uint8_t* sk_prf, const uint8_t* pk_seed, const uint8_t* pk_root, SHA256_CTX *hash_ctx, uint8_t* adrs, uint32_t q, uint8_t* out)
+void uxmss_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_seed, const uint8_t* sk_prf, const uint8_t* pk_seed, const uint8_t* pk_root, SHA256_CTX *hash_ctx, uint8_t* adrs, uint32_t q, uint32_t swn, uint8_t* out)
 {
     setLayerAddress(adrs, 0);
     setTreeAddress(adrs, 0, 0);
 
-    wots_sign(message, message_len, sk_seed, sk_prf, pk_seed, pk_root, hash_ctx, adrs, q, 1, 0, out, NULL, NULL, 0, 0);
+    wots_sign(message, message_len, sk_seed, sk_prf, pk_seed, pk_root, hash_ctx, adrs, q, 1, 0, swn, out, NULL, NULL, 0, 0);
     uxmss_auth_path(sk_seed, hash_ctx, adrs, q, out + WOTS_SIGN_LEN, NULL, NULL, 0, 0);
 }
