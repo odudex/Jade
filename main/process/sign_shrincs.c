@@ -6,6 +6,7 @@
 #include "../wallet.h"
 #include "process_utils.h"
 #include "../shrincs/shrincs.h"
+#include "utils/malloc_ext.h"
 
 bool show_sign_shrincs_activity(const char* message);
 

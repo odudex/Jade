@@ -7,6 +7,7 @@
 #include "process_utils.h"
 #include "../slh_dsa/slh_dsa.h"
 #include "../slh_dsa/slh_param.h"
+#include "utils/malloc_ext.h"
 
 static void slh_dsa_progress_adapter(uint16_t current, void* userdata)
 {
@@ -43,7 +44,8 @@ void sign_slh_dsa_process(void* process_ptr)
         snprintf(msg_display, sizeof(msg_display), "%.*s...", (int)sizeof(msg_display) - 4, message);
     }
 
-    if (!show_sign_shrincs_activity(msg_display)) {
+    const char* msg_lines[] = { "Sign message?", msg_display };
+    if (!await_yesno_activity("SLH-DSA", msg_lines, 2, false, NULL)) {
         jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
         goto cleanup;
     }

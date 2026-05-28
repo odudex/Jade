@@ -38,17 +38,24 @@ if(CONFIG_LOG_WIFI)
     list(APPEND extra_priv_requires "esp_wifi")
 endif()
 
+set(extra_src_dirs "")
+if(NOT CONFIG_AMALGAMATED_BUILD)
+    list(APPEND extra_src_dirs "slh_dsa" "shrincs")
+endif()
+
 idf_component_register(SRC_DIRS "."
                                 "attestation"
                                 "fonts"
                                 "process"
                                 "utils"
                                 "ui"
+                                ${extra_src_dirs}
                                 "${bledir}"
                                 "${qemudir}"
                                 "${usbdir}"
         PRIV_INCLUDE_DIRS "."
                           "attestation"
+                          ${extra_src_dirs}
                           "${bledir}"
                           "${qemudir}"
                           "${usbdir}"

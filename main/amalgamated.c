@@ -117,8 +117,9 @@ void __wrap_abort(void);
 #include "./process/sign_psbt.c"
 #include "./process/sign_tx.c"
 #include "./process/sign_utils.c"
-#include "./process/sign_shrincs.c"
 #include "./process/sign_slh_dsa.c"
+#ifndef CONFIG_LIBJADE
+#include "./process/sign_shrincs.c"
 #include "./shrincs/address.c"
 #include "./shrincs/hash.c"
 #include "./shrincs/pors_fp.c"
@@ -126,6 +127,7 @@ void __wrap_abort(void);
 #include "./shrincs/uxmss.c"
 #include "./shrincs/wots_c.c"
 #include "./shrincs/xmss.c"
+#endif
 #include "./slh_dsa/sha2_256.c"
 #include "./slh_dsa/sha2_512.c"
 #include "./slh_dsa/sha3_api.c"
@@ -174,8 +176,10 @@ void __wrap_abort(void);
 #include "./ui/select_registered_wallet.c"
 #include "./ui/sign_identity.c"
 #include "./ui/sign_message.c"
+#ifndef CONFIG_LIBJADE
 #include "./ui/sign_shrincs.c"
 #include "./ui/sign_shrincs_progress.c"
+#endif
 #include "./ui/sign_tx.c"
 #include "./ui/signer.c"
 #include "./ui/update_pinserver.c"
