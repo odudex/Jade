@@ -1,12 +1,13 @@
 #ifndef AMALGAMATED_BUILD
 #include "../ui.h"
 #include "jade_assert.h"
+#include "sdkconfig.h"
 #include <string.h>
 
 extern const uint8_t shrinsc_start[] asm("_binary_shrincs_bin_gz_start");
 extern const uint8_t shrinsc_end[]   asm("_binary_shrincs_bin_gz_end");
 
-#define DOT_SLOT_PX 20
+#define DOT_SLOT_PX (CONFIG_DISPLAY_WIDTH / SHRINCS_TRACK_LEN)
 
 static void shrincs_render(shrincs_progress_t* sp, uint8_t pos)
 {

@@ -23,10 +23,12 @@ void sign_slh_dsa_process(void* process_ptr)
     GET_MSG_PARAMS(process);
 
     uint8_t* sig_output = NULL;
+    gui_activity_t* act = NULL;
+    progress_bar_t pb = {};
 
-    const char* message = NULL;
+    uint8_t message[32];
     size_t msg_len = 0;
-    rpc_get_string_ptr("message", &params, &message, &msg_len);
+    rpc_get_bytes("message", 32, &params, message, &msg_len);
     if (msg_len == 0) {
         jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Missing message");
         goto cleanup;
@@ -52,8 +54,7 @@ void sign_slh_dsa_process(void* process_ptr)
 
     size_t written = 0;
 
-    progress_bar_t pb = {};
-    gui_activity_t* act = make_progress_bar_activity("Signing", "Please wait", &pb);
+    act = make_progress_bar_activity("Signing", "Please wait", &pb);
     gui_set_current_activity(act);
     
     slh_param_t prm;
@@ -95,6 +96,7 @@ cleanup:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
     if (sig_output) free(sig_output);
+    if (act) gui_set_current_activity_ex(act, true);
 #pragma GCC diagnostic pop
     return;
 }

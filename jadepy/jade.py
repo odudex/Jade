@@ -1316,11 +1316,11 @@ class JadeAPI:
     
     def sign_shrincs(self, path, message, swn):
         params = {'path': path, 'message': message, 'swn': swn}
-        return self._jadeRpc('sign_shrincs', params)
+        return self._jadeRpc('sign_shrincs', params, long_timeout=True)
     
     def sign_slh_dsa(self, path, message, is_standart):
         params = {'path': path, 'message': message, 'is_standart': is_standart}
-        return self._jadeRpc('sign_slh_dsa', params)
+        return self._jadeRpc('sign_slh_dsa', params, long_timeout=True)
 
     def get_bip85_pubkey(self, key_type, key_bits, index):
         """

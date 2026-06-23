@@ -24,10 +24,13 @@ void sign_shrincs_process(void* process_ptr)
     GET_MSG_PARAMS(process);
 
     uint8_t* sig_output = NULL;
+    gui_activity_t* act = NULL;
+    shrincs_progress_t shrincs = {};
 
-    const char* message = NULL;
+    uint8_t message[32];
     size_t msg_len = 0;
-    rpc_get_string_ptr("message", &params, &message, &msg_len);
+    // rpc_get_string_ptr("message", &params, &message, &msg_len);
+    rpc_get_bytes("message", 32, &params, message, &msg_len);
     if (msg_len == 0) {
         jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Missing message");
         goto cleanup;
@@ -52,8 +55,7 @@ void sign_shrincs_process(void* process_ptr)
 
     size_t written = 0;
 
-    shrincs_progress_t shrincs = {};
-    gui_activity_t* act = make_shrincs_progress_activity("Signing", "Please wait", &shrincs);
+    act = make_shrincs_progress_activity("Signing", "Please wait", &shrincs);
     gui_set_current_activity(act);
 
     uint8_t sk_bytes[96];
@@ -92,8 +94,9 @@ cleanup:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
     if (sig_output) free(sig_output);
-#pragma GCC diagnostic pop
     free_shrincs_progress(&shrincs);
+    if (act) gui_set_current_activity_ex(act, true);
+#pragma GCC diagnostic pop
     return;
 }
 #endif // AMALGAMATED_BUILD

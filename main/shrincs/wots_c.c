@@ -1,3 +1,4 @@
+#include "freertos/task.h"
 #include "wots_c.h"
 
 void base_w(const uint8_t* message, uint8_t* out_buffer) 
@@ -126,10 +127,14 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
 
     for (uint32_t ctr = 0; ctr < UINT32_MAX; ctr++)
     {
-        if (cb && ctr % 100000 == 0 && prog_cur < prog_end)
-        { 
-            prog_cur += prog_step;
-            cb(prog_cur, cb_ud);
+        if (cb && ctr % 100000 == 0)
+        {
+            vTaskDelay(1);
+            if (prog_cur < prog_end) 
+            {
+                prog_cur += prog_step;
+                cb(prog_cur, cb_ud);
+            }
         }
 
         uint32_t ctr_be;
@@ -145,13 +150,15 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
         uint32_t sum = 0;
         for (uint32_t i = 0; i < L; i++) sum += tmp_msg[i];
         
-        if (sum == swn) 
+        if (sum == swn)
         {
             memcpy(msg_out, tmp_msg, L);
+            mbedtls_sha256_free(&ctx);
             return ctr;
         }
     }
-    
+
+    mbedtls_sha256_free(&ctx);
     return 0; // What should we return here?
 }
 
