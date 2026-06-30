@@ -8,6 +8,59 @@
 #include "../slh_dsa/slh_dsa.h"
 #include "../slh_dsa/slh_param.h"
 #include "utils/malloc_ext.h"
+#include <mbedtls/sha512.h>
+
+void slh_dsa_key_gen_process(void* process_ptr)
+{
+    jade_process_t* process = process_ptr;
+    ASSERT_CURRENT_MESSAGE(process, "slh_dsa_key_gen");
+    ASSERT_KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process);
+    GET_MSG_PARAMS(process);
+
+    uint8_t bytes[32];
+    size_t bytes_len = 0;
+    rpc_get_bytes("bytes", 32, &params, bytes, &bytes_len);
+    if (bytes_len == 0) {
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Expected 32-byte seed");
+        goto cleanup;
+    }
+
+    uint8_t sha512_out[64];
+    mbedtls_sha512(bytes, 32, sha512_out, 0);
+
+    bool is_standard;
+    rpc_get_boolean("is_standard", &params, &is_standard);
+    
+    slh_param_t prm;
+    if (is_standard) {
+        prm = slh_dsa_sha2_128s;
+    } else {
+        memcpy(&prm, &slh_dsa_sha2_128s, sizeof(slh_param_t));
+        prm.alg_id = "custom-slh-dsa";
+        prm.h = 45;
+        prm.d = 5;
+        prm.hp = 9;
+        prm.a = 13;
+        prm.k = 10;
+        prm.lg_w = 4;
+    }
+
+    uint32_t n = prm.n;
+
+    uint8_t sk[64];
+    uint8_t pk[32];
+
+    slh_keygen_internal(sk, pk,
+        sha512_out,
+        sha512_out + n,
+        sha512_out + 2 * n,
+        &prm);
+
+    jade_process_reply_to_message_bytes(&process->ctx, sk, sizeof(sk));
+
+cleanup:
+    return;
+}
 
 static void slh_dsa_progress_adapter(uint16_t current, void* userdata)
 {
@@ -34,8 +87,8 @@ void sign_slh_dsa_process(void* process_ptr)
         goto cleanup;
     }
 
-    bool is_standart;
-    rpc_get_boolean("is_standart", &params, &is_standart);
+    bool is_standard;
+    rpc_get_boolean("is_standard", &params, &is_standard);
 
     // rpc_get_bip32_path("path", &params, path, max_path_len, &path_len);
 
@@ -60,7 +113,7 @@ void sign_slh_dsa_process(void* process_ptr)
     slh_param_t prm;
     uint8_t sk_bytes[64];
     int ret;
-    if (is_standart)
+    if (is_standard)
     { 
         prm = slh_dsa_sha2_128s;
         ret = wally_hex_to_bytes("0fac4b7b966f29c3ecff665eb4ead66eee253a1a3d501c09d2cc0a7a5afad4747906277af176f5e3cf644f591fb353c5d12447a500c02be7d4c86bd1e29a84ab", sk_bytes, sizeof(sk_bytes), &written);

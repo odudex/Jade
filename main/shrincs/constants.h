@@ -6,7 +6,7 @@
 typedef void (*shrincs_progress_cb)(uint16_t value, void *userdata);
 
 #if !defined(SHRINCS_B) && !defined(SHRINCS_L) && !defined(SHRINCS_B32)
-    #define SHRINCS_L
+    #define SHRINCS_B
 #endif
 
 #define N     ((uint32_t)16)                    // Security parameter (bytes)

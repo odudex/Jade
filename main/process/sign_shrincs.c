@@ -7,8 +7,40 @@
 #include "process_utils.h"
 #include "../shrincs/shrincs.h"
 #include "utils/malloc_ext.h"
+#include <mbedtls/sha512.h>
 
 bool show_sign_shrincs_activity(const char* message);
+
+void shrincs_key_gen_process(void* process_ptr)
+{
+    jade_process_t* process = process_ptr;
+    ASSERT_CURRENT_MESSAGE(process, "shrincs_key_gen");
+    ASSERT_KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process);
+    GET_MSG_PARAMS(process);
+
+    State state;
+    state.q = 0;
+    state.valid = 1;
+
+    SecretKey sk;
+    PublicKey pk;
+
+    uint8_t bytes[32];
+    size_t bytes_len = 0;
+    rpc_get_bytes("bytes", 32, &params, bytes, &bytes_len);
+    if (bytes_len == 0) {
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Expected 32-byte seed");
+        goto cleanup;
+    }
+
+    uint8_t sha512_out[64];
+    mbedtls_sha512(bytes, 32, sha512_out, 0);
+    shrincs_restore(sha512_out, &pk, &sk, &state);
+    jade_process_reply_to_message_bytes(&process->ctx, sk.pk.seed, 16);
+
+cleanup:
+    return;
+}
 
 static void jade_progress_adapter(uint16_t current, void* userdata)
 {

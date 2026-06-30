@@ -139,8 +139,10 @@ void sign_psbt_process(void* process_ptr);
 void sign_tx_process(void* process_ptr);
 #ifndef CONFIG_LIBJADE
 void sign_shrincs_process(void* process_ptr);
+void shrincs_key_gen_process(void* process_ptr);
 #endif
 void sign_slh_dsa_process(void* process_ptr);
+void slh_dsa_key_gen_process(void* process_ptr);
 void get_master_blinding_key_process(void* process_ptr);
 void get_blinding_key_process(void* process_ptr);
 void get_shared_nonce_process(void* process_ptr);
@@ -594,10 +596,16 @@ static void dispatch_message(jade_process_t* process)
 #ifndef CONFIG_LIBJADE
         else if (IS_METHOD("sign_shrincs")) {
             task_function = sign_shrincs_process;
-        } 
+        }
+        else if (IS_METHOD("shrincs_key_gen"))
+        {
+            task_function = shrincs_key_gen_process;
+        }
 #endif
         else if (IS_METHOD("sign_slh_dsa")) {
             task_function = sign_slh_dsa_process;
+        } else if (IS_METHOD("slh_dsa_key_gen")) {
+            task_function = slh_dsa_key_gen_process;
         } else if (IS_METHOD("get_commitments")) {
             task_function = get_commitments_process;
         } else if (IS_METHOD("get_blinding_factor")) {
