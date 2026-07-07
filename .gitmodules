@@ -10,10 +10,10 @@
 [submodule "components/esp32_deflate"]
 	path = components/esp32_deflate
 	url = https://github.com/Blockstream/esp32_deflate
-[submodule "components/esp32_bc-ur"]
-	path = components/esp32_bc-ur
-	url = https://github.com/Blockstream/esp32_bc-ur
 [submodule "components/k_quirc"]
 	path = components/k_quirc
 	url = https://github.com/odudex/k_quirc
 	branch = master
+[submodule "components/cUR"]
+	path = components/cUR
+	url = https://github.com/odudex/cUR
