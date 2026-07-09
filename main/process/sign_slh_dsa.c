@@ -7,6 +7,7 @@
 #include "process_utils.h"
 #include "../slh_dsa/slh_dsa.h"
 #include "../slh_dsa/slh_param.h"
+#include "../storage.h"
 #include "utils/malloc_ext.h"
 #include <mbedtls/sha512.h>
 
@@ -50,11 +51,23 @@ void slh_dsa_key_gen_process(void* process_ptr)
     uint8_t sk[64];
     uint8_t pk[32];
 
+    // Capture the top-layer tree leaves: [pk_root(n) || leaves(2^hp * n)]
+    const size_t leaves_len = n + ((size_t)n << prm.hp);
+    uint8_t* leaves = JADE_MALLOC(leaves_len);
+
     slh_keygen_internal(sk, pk,
         sha512_out,
         sha512_out + n,
         sha512_out + 2 * n,
-        &prm);
+        &prm,
+        leaves + n);
+
+    // Prefix with pk_root as the cache fingerprint, and persist to NVS
+    memcpy(leaves, pk + n, n);
+    if (!storage_set_slh_leaves(is_standard, leaves, leaves_len)) {
+        JADE_LOGE("Failed to persist slh-dsa leaf cache");
+    }
+    free(leaves);
 
     jade_process_reply_to_message_bytes(&process->ctx, sk, sizeof(sk));
 
@@ -99,11 +112,11 @@ void sign_slh_dsa_process(void* process_ptr)
         snprintf(msg_display, sizeof(msg_display), "%.*s...", (int)sizeof(msg_display) - 4, message);
     }
 
-    const char* msg_lines[] = { "Sign message?", msg_display };
-    if (!await_yesno_activity("SLH-DSA", msg_lines, 2, false, NULL)) {
-        jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
-        goto cleanup;
-    }
+    // const char* msg_lines[] = { "Sign message?", msg_display };
+    // if (!await_yesno_activity("SLH-DSA", msg_lines, 2, false, NULL)) {
+    //     jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
+    //     goto cleanup;
+    // }
 
     size_t written = 0;
 
@@ -137,10 +150,29 @@ void sign_slh_dsa_process(void* process_ptr)
         goto cleanup;
     }
 
-    uint32_t sig_len = slh_sig_sz(&prm); 
+    // Try to load the top-layer leaf cache saved at keygen; use it only if
+    // its pk_root fingerprint matches this signing key (else sign without it)
+    const size_t leaves_len = prm.n + ((size_t)prm.n << prm.hp);
+    uint8_t* leaves = JADE_MALLOC(leaves_len);
+    const uint8_t* top_leaves = NULL;
+    size_t leaves_written = 0;
+    // NOTE: pk_root fingerprint check disabled for testing - keygen makes random
+    // keys while signing uses a hardcoded key, so the roots never match.
+    // Signatures made with a mismatched cache WILL NOT VERIFY!
+    if (0 && storage_get_slh_leaves(is_standard, leaves, leaves_len, &leaves_written)
+        && leaves_written == leaves_len
+        /* && !memcmp(leaves, sk_bytes + 3 * prm.n, prm.n) */) {
+        top_leaves = leaves + prm.n;
+        JADE_LOGI("Using cached slh-dsa top-layer leaves");
+    } else {
+        JADE_LOGI("No matching slh-dsa leaf cache - signing without");
+    }
+
+    uint32_t sig_len = slh_sig_sz(&prm);
     sig_output = JADE_MALLOC(sig_len);
 
-    slh_sign(sig_output, (const unsigned char*)message, msg_len, NULL, 0, sk_bytes, NULL, &prm, slh_dsa_progress_adapter, &pb);
+    slh_sign(sig_output, (const unsigned char*)message, msg_len, NULL, 0, sk_bytes, NULL, &prm, slh_dsa_progress_adapter, &pb, top_leaves);
+    free(leaves);
 
     jade_process_reply_to_message_bytes(&process->ctx, sig_output, sig_len);
     JADE_LOGI("Success");

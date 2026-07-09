@@ -51,6 +51,12 @@ uint8_t storage_get_counter(void);
 bool storage_get_replay_counter(uint32_t* replay_counter);
 bool storage_erase_encrypted_blob(void);
 
+bool storage_set_slh_leaves(bool is_standard, const uint8_t* data, size_t len);
+bool storage_get_slh_leaves(bool is_standard, uint8_t* data, size_t len, size_t* written);
+
+bool storage_set_shrincs_leaves(const uint8_t* data, size_t len);
+bool storage_get_shrincs_leaves(uint8_t* data, size_t len, size_t* written);
+
 bool storage_set_key_flags(uint8_t flags);
 uint8_t storage_get_key_flags(void);
 

@@ -21,12 +21,12 @@ void shrincs_key_gen(PublicKey* out_pk, SecretKey* out_sk, State* out_state)
     uint8_t seed[3*N];
     generate_random_bytes(seed, 3*N);
 
-    shrincs_restore(seed, out_pk, out_sk, out_state);
+    shrincs_restore(seed, out_pk, out_sk, out_state, NULL);
 
     out_state->valid = 1;
 }
 
-void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, State* out_state)
+void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, State* out_state, uint8_t* leaf_capture)
 {
     uint8_t sk_seed[N];
     uint8_t sk_prf[N];
@@ -46,8 +46,8 @@ void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, 
     sha256_add_to_ctx(&hash_ctx, adrs, 32);
     sha256_add_to_ctx(&hash_ctx, adrs, 16);
 
-    uint8_t pk_sf[N]; 
-    uxmss_root(sk_seed, &hash_ctx, adrs, pk_sf);
+    uint8_t pk_sf[N];
+    uxmss_root(sk_seed, &hash_ctx, adrs, pk_sf, leaf_capture);
 
     setLayerAddress(adrs, D - 1);
     setTreeAddress(adrs, 0, 0);
@@ -82,7 +82,8 @@ void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, 
     out_state->valid = 0;
 }
 
-uint32_t shrincs_sign_stateful(const uint8_t* message, uint32_t message_len, SecretKey* sk, State* state, uint32_t swn, uint8_t* out, shrincs_progress_cb cb, void *cb_userdata)
+uint32_t shrincs_sign_stateful(const uint8_t* message, uint32_t message_len, SecretKey* sk, State* state, uint32_t swn, uint8_t* out, shrincs_progress_cb cb, void *cb_userdata,
+    const uint8_t* leaf_cache)
 {
     if (!state->valid) {
         return 0;
@@ -108,8 +109,15 @@ uint32_t shrincs_sign_stateful(const uint8_t* message, uint32_t message_len, Sec
 
     setLayerAddress(adrs, 0);
     setTreeAddress(adrs, 0, 0);
+    // Progress split: SHRINCS_B auth path (W=256, 141 wots_pk_gen calls) dominates time.
+    // SHRINCS_L grinding (4M iters) dominates. Allocate accordingly.
+#if defined(SHRINCS_B) || defined(SHRINCS_B32)
+    wots_sign(message, message_len, sk->seed, sk->prf, sk->pk.seed, sk->pk.root, &hash_ctx, adrs, q, 1, 0, swn, out + N, cb, cb_userdata, 0, 30);
+    uxmss_auth_path(sk->seed, &hash_ctx, adrs, q, out + N + WOTS_SIGN_LEN, cb, cb_userdata, 30, 1000, leaf_cache);
+#else // SHRINCS_L: grinding dominates
     wots_sign(message, message_len, sk->seed, sk->prf, sk->pk.seed, sk->pk.root, &hash_ctx, adrs, q, 1, 0, swn, out + N, cb, cb_userdata, 0, 800);
-    uxmss_auth_path(sk->seed, &hash_ctx, adrs, q, out + N + WOTS_SIGN_LEN, cb, cb_userdata, 800, 1000);
+    uxmss_auth_path(sk->seed, &hash_ctx, adrs, q, out + N + WOTS_SIGN_LEN, cb, cb_userdata, 800, 1000, leaf_cache);
+#endif
 
     state->q = q;
     return 1;

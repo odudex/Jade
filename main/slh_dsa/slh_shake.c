@@ -145,6 +145,11 @@ static void shake_mk_var(slh_var_t *var, const uint8_t *pk, const uint8_t *sk,
 
   /* local ADRS buffer */
   var->adrs = &var->t_adrs;
+
+  var->prog_cb = NULL;
+  var->top_leaves = NULL;
+  var->capture_leaves = NULL;
+  var->at_top_layer = 0;
 }
 
 /* === Chaining function used in WOTS+ */

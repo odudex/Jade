@@ -487,6 +487,31 @@ bool storage_erase_encrypted_blob(void)
     return erase_key(DEFAULT_NAMESPACE, BLOB_FIELD);
 }
 
+// SLH-DSA top-layer tree leaf cache: [pk_root(n) || leaves(2^hp * n)]
+// Separate slots for the standard and custom parameter sets
+bool storage_set_slh_leaves(const bool is_standard, const uint8_t* data, const size_t len)
+{
+    JADE_ASSERT(data);
+    return store_blob(DEFAULT_NAMESPACE, is_standard ? "slh_lv_s" : "slh_lv_c", data, len);
+}
+
+bool storage_get_slh_leaves(const bool is_standard, uint8_t* data, const size_t len, size_t* written)
+{
+    return read_blob(DEFAULT_NAMESPACE, is_standard ? "slh_lv_s" : "slh_lv_c", data, len, written);
+}
+
+// SHRINCS stateful-tree leaf cache: [pk_root(N) || leaves((HSF+1) * N)]
+bool storage_set_shrincs_leaves(const uint8_t* data, const size_t len)
+{
+    JADE_ASSERT(data);
+    return store_blob(DEFAULT_NAMESPACE, "shr_lv", data, len);
+}
+
+bool storage_get_shrincs_leaves(uint8_t* data, const size_t len, size_t* written)
+{
+    return read_blob(DEFAULT_NAMESPACE, "shr_lv", data, len, written);
+}
+
 bool storage_decrement_counter(void)
 {
     uint8_t counter = storage_get_counter();

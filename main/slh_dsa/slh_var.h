@@ -55,6 +55,12 @@ struct slh_var_s
   void           *prog_ud;
   uint32_t        prog_done;
   uint32_t        prog_total;
+
+  /* Top-layer (d-1) XMSS leaf cache: the top tree is fixed for a given key,
+   * so its 2^hp leaves can be computed once at keygen and reused at signing */
+  const uint8_t *top_leaves;    /* read cache used when signing (or NULL) */
+  uint8_t       *capture_leaves; /* write target filled during keygen (or NULL) */
+  int            at_top_layer;   /* nonzero while signing the layer d-1 tree */
 };
 
 /* === Lower-level functions */

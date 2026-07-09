@@ -55,18 +55,22 @@ extern "C"
   int slh_keygen(uint8_t *sk, uint8_t *pk, int (*rbg)(uint8_t *x, size_t xlen),
                  const slh_param_t *prm);
 
+  /* top_leaves_out: optional buffer of (1 << prm->hp) * prm->n bytes; if not
+   * NULL, receives the top-layer tree leaves for use as a signing cache. */
   int slh_keygen_internal(uint8_t *sk, uint8_t *pk, const uint8_t *sk_seed,
                           const uint8_t *sk_prf, const uint8_t *pk_seed,
-                          const slh_param_t *prm);
+                          const slh_param_t *prm, uint8_t *top_leaves_out);
 
   /* Generate an SLH-DSA signature. */
   size_t slh_sign_internal(uint8_t *sig, const uint8_t *m, size_t m_sz,
                            const uint8_t *sk, const uint8_t *addrnd,
                            const slh_param_t *prm);
 
+  /* top_leaves: optional cached top-layer tree leaves from keygen (or NULL) */
   size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz,
                   const uint8_t *ctx, size_t ctx_sz, const uint8_t *sk,
-                  const uint8_t *addrnd, const slh_param_t *prm, slh_progress_cb cb, void *ud);
+                  const uint8_t *addrnd, const slh_param_t *prm, slh_progress_cb cb, void *ud,
+                  const uint8_t *top_leaves);
 
   /* Verify an SLH-DSA signature. */
   /* return 0 on verification failure, 1 on success */

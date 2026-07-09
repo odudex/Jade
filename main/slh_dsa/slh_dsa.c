@@ -10,6 +10,16 @@
 #include "slh_var.h"
 #include "slh_sys.h"
 
+// Comment to make it multithread
+#define CONFIG_FREERTOS_UNICORE 1
+
+#include <sdkconfig.h>
+#ifndef CONFIG_FREERTOS_UNICORE
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "../jade_tasks.h"
+#endif
+
 /* === Internal */
 
 /* helper functions to compute "len = len1 + len2" */
@@ -169,6 +179,69 @@ static void slhi_wots_pk_from_sig(slh_var_t *var, uint8_t *pk, const uint8_t *si
 /* === Compute the root of a Merkle subtree of WOTS+ public keys. */
 /* Algorithm 9: slhi_xmss_node(SK.seed, i, z, PK.seed, ADRS) */
 
+#ifndef CONFIG_FREERTOS_UNICORE
+
+/* Work pool for parallel WOTS chain building across both ESP32 cores.
+ * Workers pull the next free chain index from the shared counter, so the
+ * load self-balances if one core is slowed (eg. GUI repaints on core 1). */
+typedef struct
+{
+  slh_var_t var;             /* private context clone for the secondary core */
+  uint8_t *tmp;              /* shared output: chain k writes tmp + k*n */
+  uint32_t len;
+  uint32_t w1;
+  volatile uint32_t next_k;  /* shared work counter */
+  TaskHandle_t primary_handle;
+} slh_chain_pool_t;
+
+static void slh_wots_chains_pull(slh_var_t *var, slh_chain_pool_t *pool)
+{
+  const size_t n = var->prm->n;
+  uint32_t k;
+  while ((k = __atomic_fetch_add(&pool->next_k, 1, __ATOMIC_RELAXED)) < pool->len)
+  {
+    adrs_set_chain_address(var, k);
+    var->prm->wots_chain(var, pool->tmp + k * n, pool->w1);
+  }
+}
+
+static void slh_wots_chains_secondary(void *arg)
+{
+  slh_chain_pool_t *pool = (slh_chain_pool_t *)arg;
+  slh_wots_chains_pull(&pool->var, pool);
+  xTaskNotifyGive(pool->primary_handle);
+  vTaskDelete(NULL);
+}
+
+/* Builds all len WOTS chains of one keypair into tmp, using both cores */
+static void slh_wots_pkgen_chains(slh_var_t *var, uint8_t *tmp, uint32_t len,
+                                  uint32_t w1)
+{
+  slh_chain_pool_t pool;
+  memcpy(&pool.var, var, sizeof(slh_var_t));
+  pool.var.adrs = &pool.var.t_adrs; /* re-point ADRS into the clone */
+  pool.var.prog_cb = NULL;          /* progress reported by primary only */
+  pool.tmp = tmp;
+  pool.len = len;
+  pool.w1 = w1;
+  pool.next_k = 0;
+  pool.primary_handle = xTaskGetCurrentTaskHandle();
+
+  const BaseType_t ret = xTaskCreatePinnedToCore(
+      slh_wots_chains_secondary, "slh_chn", 2048, &pool,
+      JADE_TASK_PRIO_TEMPORARY, NULL, JADE_CORE_SECONDARY);
+
+  /* Primary pulls from the same pool; does all chains if task create failed */
+  slh_wots_chains_pull(var, &pool);
+
+  if (ret == pdPASS)
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  }
+}
+
+#endif /* !CONFIG_FREERTOS_UNICORE */
+
 static void slhi_xmss_node(slh_var_t *var, uint8_t *node, uint32_t i, uint32_t z)
 {
   const slh_param_t *prm = var->prm;
@@ -176,7 +249,9 @@ static void slhi_xmss_node(slh_var_t *var, uint8_t *node, uint32_t i, uint32_t z
   int p;
   uint8_t *h0, h[SLH_MAX_HP][SLH_MAX_N];
   uint8_t tmp[SLH_MAX_LEN * SLH_MAX_N];
+#ifdef CONFIG_FREERTOS_UNICORE
   uint8_t *sk;
+#endif
   size_t n = prm->n;
   size_t len = get_len(prm);
 
@@ -185,21 +260,39 @@ static void slhi_xmss_node(slh_var_t *var, uint8_t *node, uint32_t i, uint32_t z
   w1 = (1 << prm->lg_w) - 1;
   for (j = 0; j < (1u << z); j++)
   {
-    adrs_set_key_pair_address(var, i);
-
-    /* === Generate a WOTS+ public key. */
-    /* Algorithm 6: wots_PKgen(SK.seed, PK.seed, ADRS) */
-    sk = tmp;
-    for (k = 0; k < len; k++)
-    {
-      adrs_set_chain_address(var, k);
-      prm->wots_chain(var, sk, w1);
-      sk += n;
-    }
-    adrs_set_type_and_clear_not_kp(var, ADRS_WOTS_PK);
     h0 = p >= 0 ? h[p] : node;
     p++;
-    prm->h_t(var, h0, tmp, len * n);
+
+    if (var->at_top_layer && var->top_leaves != NULL)
+    {
+      /* top-layer tree leaves are precomputed at keygen: just look up */
+      memcpy(h0, var->top_leaves + i * n, n);
+    }
+    else
+    {
+      adrs_set_key_pair_address(var, i);
+
+      /* === Generate a WOTS+ public key. */
+      /* Algorithm 6: wots_PKgen(SK.seed, PK.seed, ADRS) */
+#ifndef CONFIG_FREERTOS_UNICORE
+      slh_wots_pkgen_chains(var, tmp, len, w1);
+#else
+      sk = tmp;
+      for (k = 0; k < len; k++)
+      {
+        adrs_set_chain_address(var, k);
+        prm->wots_chain(var, sk, w1);
+        sk += n;
+      }
+#endif
+      adrs_set_type_and_clear_not_kp(var, ADRS_WOTS_PK);
+      prm->h_t(var, h0, tmp, len * n);
+
+      if (var->capture_leaves != NULL)
+      {
+        memcpy(var->capture_leaves + i * n, h0, n);
+      }
+    }
 
     /* this slhi_xmss_node() implementation is non-recursive */
     for (k = 0; (j >> k) & 1; k++)
@@ -293,6 +386,7 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
 
   adrs_zero(var);
   adrs_set_tree_address(var, i_tree);
+  var->at_top_layer = (prm->d == 1);
   sx_sz = slhi_xmss_sign(var, sh, m, i_leaf);
 
   if (var->prog_cb) {
@@ -310,6 +404,7 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
     i_tree >>= prm->hp;
     adrs_set_layer_address(var, j);
     adrs_set_tree_address(var, i_tree);
+    var->at_top_layer = (j == prm->d - 1);
     slhi_xmss_sign(var, sh, m, i_leaf);
 
     if (var->prog_cb) {
@@ -319,6 +414,7 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
     }
   }
 
+  var->at_top_layer = 0;
   return sx_sz * prm->d;
 }
 
@@ -391,18 +487,88 @@ static void slhi_fors_node(slh_var_t *var, uint8_t *node, uint32_t i, uint32_t z
   }
 }
 
+#ifndef CONFIG_FREERTOS_UNICORE
+
+/* Work pool for parallel FORS signing: the k trees are independent, each
+ * writes its own n*(1+a) slice of the signature. Workers pull the next
+ * unclaimed tree from the shared counter. */
+typedef struct
+{
+  slh_var_t var;            /* private context clone for the secondary core */
+  uint8_t *sf;              /* signature base: tree i writes at i*n*(1+a) */
+  const uint32_t *vi;       /* per-tree message digits (read-only) */
+  volatile uint32_t next_i; /* shared work counter */
+  TaskHandle_t primary_handle;
+} slh_fors_pool_t;
+
+static void slh_fors_trees_pull(slh_var_t *var, slh_fors_pool_t *pool)
+{
+  const slh_param_t *prm = var->prm;
+  const size_t n = prm->n;
+  uint32_t i, j, s;
+
+  while ((i = __atomic_fetch_add(&pool->next_i, 1, __ATOMIC_RELAXED)) < prm->k)
+  {
+    uint8_t *sf = pool->sf + i * n * (1 + prm->a);
+
+    /* fors_SKgen() */
+    adrs_set_tree_index(var, (i << prm->a) + pool->vi[i]);
+    prm->fors_hash(var, sf, 0);
+    sf += n;
+
+    for (j = 0; j < prm->a; j++)
+    {
+      s = (pool->vi[i] >> j) ^ 1;
+      slhi_fors_node(var, sf, (i << (prm->a - j)) + s, j);
+      sf += n;
+    }
+  }
+}
+
+static void slh_fors_trees_secondary(void *arg)
+{
+  slh_fors_pool_t *pool = (slh_fors_pool_t *)arg;
+  slh_fors_trees_pull(&pool->var, pool);
+  xTaskNotifyGive(pool->primary_handle);
+  vTaskDelete(NULL);
+}
+
+#endif /* !CONFIG_FREERTOS_UNICORE */
+
 /* === Generates a FORS signature. */
 /* Algorithm 16: slhi_fors_sign(md, SK.seed, PK.seed, ADRS) */
 
 static size_t slhi_fors_sign(slh_var_t *var, uint8_t *sf, const uint8_t *md)
 {
   const slh_param_t *prm = var->prm;
-  uint32_t i, j, s;
   uint32_t vi[SLH_MAX_K];
   size_t n = prm->n;
 
   base_2b(vi, md, prm->a, prm->k);
 
+#ifndef CONFIG_FREERTOS_UNICORE
+  slh_fors_pool_t pool;
+  memcpy(&pool.var, var, sizeof(slh_var_t));
+  pool.var.adrs = &pool.var.t_adrs; /* re-point ADRS into the clone */
+  pool.var.prog_cb = NULL;          /* progress reported by primary only */
+  pool.sf = sf;
+  pool.vi = vi;
+  pool.next_i = 0;
+  pool.primary_handle = xTaskGetCurrentTaskHandle();
+
+  const BaseType_t ret = xTaskCreatePinnedToCore(
+      slh_fors_trees_secondary, "slh_fors", 3072, &pool,
+      JADE_TASK_PRIO_TEMPORARY, NULL, JADE_CORE_SECONDARY);
+
+  /* Primary pulls from the same pool; does all trees if task create failed */
+  slh_fors_trees_pull(var, &pool);
+
+  if (ret == pdPASS)
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  }
+#else
+  uint32_t i, j, s;
   for (i = 0; i < prm->k; i++)
   {
     /* fors_SKgen() */
@@ -417,6 +583,7 @@ static size_t slhi_fors_sign(slh_var_t *var, uint8_t *sf, const uint8_t *md)
       sf += n;
     }
   }
+#endif
   return n * prm->k * (1 + prm->a);
 }
 
@@ -484,7 +651,7 @@ size_t slh_sk_sz(const slh_param_t *prm) { return 4 * prm->n; }
 
 int slh_keygen_internal(uint8_t *sk, uint8_t *pk, const uint8_t *sk_seed,
                         const uint8_t *sk_prf, const uint8_t *pk_seed,
-                        const slh_param_t *prm)
+                        const slh_param_t *prm, uint8_t *top_leaves_out)
 {
   slh_var_t var;
   size_t n = prm->n;
@@ -494,6 +661,7 @@ int slh_keygen_internal(uint8_t *sk, uint8_t *pk, const uint8_t *sk_seed,
   memcpy(sk + 2 * n, pk_seed, n);   /* PK.seed */
   memset(sk + 3 * n, 0x00, n);      /* PK.root not generated yet */
   prm->mk_var(&var, NULL, sk, prm); /* fill in partial */
+  var.capture_leaves = top_leaves_out; /* optionally save top-tree leaves */
 
   adrs_zero(&var);
   adrs_set_layer_address(&var, prm->d - 1);
@@ -620,7 +788,8 @@ size_t slh_sign_internal(uint8_t *sig, const uint8_t *m, size_t m_sz,
 
 size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz, const uint8_t *ctx,
                 size_t ctx_sz, const uint8_t *sk, const uint8_t *addrnd,
-                const slh_param_t *prm, slh_progress_cb cb, void *ud)
+                const slh_param_t *prm, slh_progress_cb cb, void *ud,
+                const uint8_t *top_leaves)
 {
   slh_var_t var;
   const uint8_t *opt_rand;
@@ -636,6 +805,7 @@ size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz, const uint8_t *ctx,
   prm->mk_var(&var, NULL, sk, prm);
   var.prog_cb = cb; var.prog_ud = ud;
   var.prog_done = 0; var.prog_total = prm->d;
+  var.top_leaves = top_leaves; /* optional cached layer d-1 leaves */
 
   if (addrnd != NULL)
   {

@@ -6,6 +6,7 @@
 #include "../wallet.h"
 #include "process_utils.h"
 #include "../shrincs/shrincs.h"
+#include "../storage.h"
 #include "utils/malloc_ext.h"
 #include <mbedtls/sha512.h>
 
@@ -18,13 +19,6 @@ void shrincs_key_gen_process(void* process_ptr)
     ASSERT_KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process);
     GET_MSG_PARAMS(process);
 
-    State state;
-    state.q = 0;
-    state.valid = 1;
-
-    SecretKey sk;
-    PublicKey pk;
-
     uint8_t bytes[32];
     size_t bytes_len = 0;
     rpc_get_bytes("bytes", 32, &params, bytes, &bytes_len);
@@ -35,8 +29,34 @@ void shrincs_key_gen_process(void* process_ptr)
 
     uint8_t sha512_out[64];
     mbedtls_sha512(bytes, 32, sha512_out, 0);
-    shrincs_restore(sha512_out, &pk, &sk, &state);
-    jade_process_reply_to_message_bytes(&process->ctx, sk.pk.seed, 16);
+
+    // Capture the stateful-tree leaves: [pk_root(N) || leaves((HSF+1) * N)]
+    const size_t leaves_len = N + (HSF + 1) * N;
+    uint8_t* leaves = JADE_MALLOC(leaves_len);
+
+    // shrincs_restore(sha512_out, &pk, &sk, &state, leaves + N);
+
+    uint8_t adrs[32] = {0};
+
+    SHA256_CTX hash_ctx;
+    mbedtls_sha256_init(&hash_ctx);
+
+    sha256_add_to_ctx(&hash_ctx, sha512_out + 2*N, N);
+    // Add zeros
+    sha256_add_to_ctx(&hash_ctx, adrs, 32);
+    sha256_add_to_ctx(&hash_ctx, adrs, 16);
+    
+    uint8_t pk_sf[N]; 
+    uxmss_root(sha512_out, &hash_ctx, adrs, pk_sf, leaves + N);
+
+    // Prefix with pk_root as the cache fingerprint, and persist to NVS
+    memcpy(leaves, pk_sf, N);
+    if (!storage_set_shrincs_leaves(leaves, leaves_len)) {
+        JADE_LOGE("Failed to persist shrincs leaf cache");
+    }
+    free(leaves);
+
+    jade_process_reply_to_message_bytes(&process->ctx, pk_sf, 16);
 
 cleanup:
     return;
@@ -80,10 +100,10 @@ void sign_shrincs_process(void* process_ptr)
         snprintf(msg_display, sizeof(msg_display), "%.*s...", (int)sizeof(msg_display) - 4, message);
     }
 
-    if (!show_sign_shrincs_activity(msg_display)) {
-        jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
-        goto cleanup;
-    }
+    // if (!show_sign_shrincs_activity(msg_display)) {
+    //     jade_process_reject_message(process, CBOR_RPC_USER_CANCELLED, "User declined");
+    //     goto cleanup;
+    // }
 
     size_t written = 0;
 
@@ -112,9 +132,29 @@ void sign_shrincs_process(void* process_ptr)
     memcpy(sk.pk.seed,  sk_bytes + N * 4, N);
     memcpy(sk.pk.root,  sk_bytes + N * 5, N);
 
+    // Try to load the stateful-tree leaf cache saved at keygen.
+    // NOTE: pk_root fingerprint check disabled for testing - keygen makes random
+    // keys while signing uses a hardcoded key, so the roots never match.
+    // Signatures made with a mismatched cache WILL NOT VERIFY!
+    const size_t leaves_len = N + (HSF + 1) * N;
+    uint8_t* leaves = JADE_MALLOC(leaves_len);
+    const uint8_t* leaf_cache = NULL;
+    size_t leaves_written = 0;
+    if (0 && // TEMP: benchmark without leaf cache
+        storage_get_shrincs_leaves(leaves, leaves_len, &leaves_written)
+        && leaves_written == leaves_len
+        /* && !memcmp(leaves, sk.pk.root, N) */) {
+        leaf_cache = leaves + N;
+        JADE_LOGI("Using cached shrincs stateful-tree leaves");
+    } else {
+        JADE_LOGI("No shrincs leaf cache - signing without");
+    }
+
     sig_output = JADE_MALLOC(sig_len);
 
-    if (!shrincs_sign_stateful((const uint8_t*)message, msg_len, &sk, &state, swn, sig_output, jade_progress_adapter, &shrincs)) {
+    const uint32_t sign_ok = shrincs_sign_stateful((const uint8_t*)message, msg_len, &sk, &state, swn, sig_output, jade_progress_adapter, &shrincs, leaf_cache);
+    free(leaves);
+    if (!sign_ok) {
         jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Sign failed");
         goto cleanup;
     }
