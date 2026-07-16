@@ -143,6 +143,8 @@ void shrincs_key_gen_process(void* process_ptr);
 #endif
 void sign_slh_dsa_process(void* process_ptr);
 void slh_dsa_key_gen_process(void* process_ptr);
+void sign_xmss_process(void* process_ptr);
+void xmss_key_gen_process(void* process_ptr);
 void get_master_blinding_key_process(void* process_ptr);
 void get_blinding_key_process(void* process_ptr);
 void get_shared_nonce_process(void* process_ptr);
@@ -606,6 +608,10 @@ static void dispatch_message(jade_process_t* process)
             task_function = sign_slh_dsa_process;
         } else if (IS_METHOD("slh_dsa_key_gen")) {
             task_function = slh_dsa_key_gen_process;
+        } else if (IS_METHOD("sign_xmss")) {
+            task_function = sign_xmss_process;
+        } else if (IS_METHOD("xmss_key_gen")) {
+            task_function = xmss_key_gen_process;
         } else if (IS_METHOD("get_commitments")) {
             task_function = get_commitments_process;
         } else if (IS_METHOD("get_blinding_factor")) {

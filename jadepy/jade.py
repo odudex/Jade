@@ -1329,6 +1329,14 @@ class JadeAPI:
     def gen_slh_dsa_key(self, bytes, is_standard):
         params = {'bytes': bytes, 'is_standard': is_standard}
         return self._jadeRpc('slh_dsa_key_gen', params, long_timeout=True)
+    
+    def sign_xmss(self, path, message):
+        params = {'path': path, 'message': message}
+        return self._jadeRpc('sign_xmss', params)
+    
+    def gen_xmss_key(self, bytes):
+        params = {'bytes': bytes}
+        return self._jadeRpc('xmss_key_gen', params, long_timeout=True)
 
     def get_bip85_pubkey(self, key_type, key_bits, index):
         """
