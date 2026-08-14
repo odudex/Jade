@@ -20,10 +20,15 @@
 #define BATTERY_ADC_ATTEN ADC_ATTEN_DB_12
 #define BATTERY_EMA_ALPHA 0.3f // estimated moving average smoothing factor
 
-#define LCD_BL_LEDC_TIMER LEDC_TIMER_0
+// NOTE: keep off LEDC timer 0 / channel 0 - camera.c hands those to
+// esp_camera_init() to generate the sensor XCLK.  Sharing them lets the camera
+// retune the timer from the backlight's 10kHz/10-bit to 20MHz/1-bit and rebind
+// the channel to the XCLK pin, so the backlight dies as soon as scanning
+// starts.  This is the only camera-capable board with an LEDC backlight.
+#define LCD_BL_LEDC_TIMER LEDC_TIMER_3
 #define LCD_BL_LEDC_MODE LEDC_LOW_SPEED_MODE
 
-#define LCD_BL_LEDC_CHANNEL LEDC_CHANNEL_0
+#define LCD_BL_LEDC_CHANNEL LEDC_CHANNEL_7
 #define LCD_BL_LEDC_DUTY_RES LEDC_TIMER_10_BIT
 #define LCD_BL_LEDC_DUTY (1024)
 #define LCD_BL_LEDC_FREQUENCY (10000)
