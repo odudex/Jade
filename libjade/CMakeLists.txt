@@ -120,8 +120,17 @@ add_library(jade SHARED ${COMMON_SRC})
 target_link_libraries(jade PRIVATE m z ur cbor_target otpauth_migrate_target mbedtls mbedcrypto mbedx509)
 target_include_directories(jade PRIVATE ${COMMON_INCLUDES})
 
+# libjade.c textually #includes the k_quirc sources, so the QR decoder is
+# configured here rather than by components/k_quirc/CMakeLists.txt (which only
+# applies to the ESP-IDF component build). These must stay in step with the
+# definitions that file sets for the firmware: without them the qr_qvga_*
+# fixtures exercised a materially different recognition path from the one that
+# actually ships. Attached to the source file, not a target, so any future
+# target compiling libjade.c inherits them.
 set_source_files_properties(libjade.c PROPERTIES COMPILE_OPTIONS
   "-Wall;-W;-Wno-format;-Wno-unused-function;-Wno-unused-parameter;-Wno-sign-compare;-Wno-missing-field-initializers;-Wno-narrowing")
+set_source_files_properties(libjade.c PROPERTIES COMPILE_DEFINITIONS
+  "K_QUIRC_ADAPTIVE_THRESHOLD;K_QUIRC_BILINEAR_THRESHOLD")
 target_compile_definitions(jade PRIVATE LIBJADE_BUILD)
 
 # libjade selfcheck overrides - used for internal firmware unit tests.
