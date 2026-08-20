@@ -39,7 +39,7 @@ void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, 
     uint8_t adrs[32] = {0};
 
     SHA256_CTX hash_ctx;
-    mbedtls_sha256_init(&hash_ctx);
+    sha256_init_ctx(&hash_ctx);
 
     sha256_add_to_ctx(&hash_ctx, pk_seed, N);
     // Add zeros
@@ -60,8 +60,8 @@ void shrincs_restore(const uint8_t* seed, PublicKey* out_pk, SecretKey* out_sk, 
     uint8_t pk_root[N];
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, &hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, &hash_ctx);
 
     sha256_add_to_ctx(&ctx, adrs, 32);
     sha256_add_to_ctx(&ctx, pk_sf, N);
@@ -98,7 +98,7 @@ uint32_t shrincs_sign_stateful(const uint8_t* message, uint32_t message_len, Sec
     uint8_t adrs[32] = {0};
 
     SHA256_CTX hash_ctx;
-    mbedtls_sha256_init(&hash_ctx);
+    sha256_init_ctx(&hash_ctx);
 
     sha256_add_to_ctx(&hash_ctx, sk->pk.seed, N);
     // Add zeros
@@ -128,7 +128,7 @@ uint32_t shrincs_sign_stateless(const uint8_t* message, uint32_t message_len, Se
     uint8_t adrs[32] = {0};
 
     SHA256_CTX hash_ctx;
-    mbedtls_sha256_init(&hash_ctx);
+    sha256_init_ctx(&hash_ctx);
 
     sha256_add_to_ctx(&hash_ctx, sk->pk.seed, N);
     // Add zeros
@@ -199,7 +199,7 @@ uint32_t shrincs_verify_stateful(const uint8_t* message, uint32_t message_len, c
     uint32_t last_sf_level = !(q_raw < HSF);
 
     SHA256_CTX hash_ctx;
-    mbedtls_sha256_init(&hash_ctx);
+    sha256_init_ctx(&hash_ctx);
 
     sha256_add_to_ctx(&hash_ctx, pk->seed, N);
     // Add zeros
@@ -215,8 +215,8 @@ uint32_t shrincs_verify_stateful(const uint8_t* message, uint32_t message_len, c
         setTypeAndClear(adrs, ROOT);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, &hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, &hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, sf, N);
@@ -248,7 +248,7 @@ uint32_t shrincs_verify_stateless(const uint8_t* message, uint32_t message_len, 
     const uint8_t* r = pors_sig;
 
     SHA256_CTX hash_ctx;
-    mbedtls_sha256_init(&hash_ctx);
+    sha256_init_ctx(&hash_ctx);
 
     sha256_add_to_ctx(&hash_ctx, pk->seed, N);
     // Add zeros
@@ -256,8 +256,8 @@ uint32_t shrincs_verify_stateless(const uint8_t* message, uint32_t message_len, 
     sha256_add_to_ctx(&hash_ctx, adrs, 16);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, &hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, &hash_ctx);
 
     setTypeAndClear(adrs, SL_H_MSG);
     sha256_add_to_ctx(&ctx, adrs, 32);

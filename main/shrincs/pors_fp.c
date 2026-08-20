@@ -37,8 +37,8 @@ void pors_msg_to_indices(const uint8_t* message, uint8_t* adrs, SHA256_CTX* hash
 
     setTypeAndClear(adrs, PORS_XOF);
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
 
     sha256_add_to_ctx(&ctx, adrs, 32);
     sha256_add_to_ctx(&ctx, message, 32);
@@ -46,8 +46,8 @@ void pors_msg_to_indices(const uint8_t* message, uint8_t* adrs, SHA256_CTX* hash
     for (uint32_t blk = 0; blk < UINT32_MAX; blk++)
     {
         SHA256_CTX ctx_;
-        mbedtls_sha256_init(&ctx_);
-        mbedtls_sha256_clone(&ctx_, &ctx);
+        sha256_init_ctx(&ctx_);
+        sha256_copy_ctx(&ctx_, &ctx);
 
         uint32_t ctr_be;
         REVERSE32(blk, ctr_be);
@@ -177,8 +177,8 @@ void pors_grind(const uint8_t* message, uint32_t message_len, const uint8_t* sk_
     setTypeAndClear(adrs, SL_H_MSG);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
     sha256_add_to_ctx(&ctx, adrs, 32);
 
     Tuple32_t A[M_MAX];
@@ -193,8 +193,8 @@ void pors_grind(const uint8_t* message, uint32_t message_len, const uint8_t* sk_
         prf_msg(sk_prf, pk_seed, opt_rand, message, message_len, 1, ctr, R_LEN, r_out);
 
         SHA256_CTX ctx_;
-        mbedtls_sha256_init(&ctx_);
-        mbedtls_sha256_clone(&ctx_, &ctx);
+        sha256_init_ctx(&ctx_);
+        sha256_copy_ctx(&ctx_, &ctx);
 
         sha256_add_to_ctx(&ctx_, r_out, R_LEN);
         sha256_add_to_ctx(&ctx_, pk_root, N);
@@ -216,8 +216,8 @@ void pors_sk_gen(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs, ui
     setTreeIndex(adrs, leaf_idx);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
 
     sha256_add_to_ctx(&ctx, adrs, 32);
     sha256_add_to_ctx(&ctx, sk_seed, N);
@@ -229,8 +229,8 @@ void pors_treehash(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs, 
     uint32_t s = T - (1 << (B - 1));
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
 
     uint8_t sk[N];
 
@@ -351,8 +351,8 @@ void pors_pk_from_sig(const uint8_t* sig, uint32_t indices[K], SHA256_CTX* hash_
         setTreeIndex(adrs, indices[i]);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, sk_i, N);
@@ -409,8 +409,8 @@ void pors_pk_from_sig(const uint8_t* sig, uint32_t indices[K], SHA256_CTX* hash_
             setTreeIndex(adrs, idx >> 1);
 
             SHA256_CTX ctx;
-            mbedtls_sha256_init(&ctx);
-            mbedtls_sha256_clone(&ctx, hash_ctx);
+            sha256_init_ctx(&ctx);
+            sha256_copy_ctx(&ctx, hash_ctx);
 
             sha256_add_to_ctx(&ctx, adrs, 32);
 
@@ -463,8 +463,8 @@ void pors_pk_from_sig(const uint8_t* sig, uint32_t indices[K], SHA256_CTX* hash_
     setTypeAndClear(adrs, PORS_PK);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
     
     sha256_add_to_ctx(&ctx, adrs, 32);
     sha256_add_to_ctx(&ctx, I[0].val, N);

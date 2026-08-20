@@ -36,8 +36,8 @@ void chain(const uint8_t* m, uint32_t start, uint32_t steps, SHA256_CTX* hash_ct
         setHashAddress(adrs, i);
         
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, out, N);
@@ -71,8 +71,8 @@ static void wots_pk_chain_worker(wots_pk_chain_ctx_t* ctx, uint8_t* adrs)
         setChainAddress(adrs, i);
 
         SHA256_CTX c;
-        mbedtls_sha256_init(&c);
-        mbedtls_sha256_clone(&c, ctx->hash_ctx);
+        sha256_init_ctx(&c);
+        sha256_copy_ctx(&c, ctx->hash_ctx);
         sha256_add_to_ctx(&c, adrs, 32);
         sha256_add_to_ctx(&c, ctx->sk_seed, N);
         uint8_t sk_i[N];
@@ -145,8 +145,8 @@ void wots_pk_gen(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs, ui
         setChainAddress(adrs, i);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, sk_seed, N);
@@ -166,8 +166,8 @@ void wots_pk_gen(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs, ui
     setKeyPairAddress(adrs, keypair);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
 
     sha256_add_to_ctx(&ctx, adrs, 32);
 
@@ -209,8 +209,8 @@ static void wots_grind_secondary(void* arg)
         uint32_t ctr_be;
         REVERSE32(ctr, ctr_be);
         SHA256_CTX ctx_;
-        mbedtls_sha256_init(&ctx_);
-        mbedtls_sha256_clone(&ctx_, ctx->ctx_base);
+        sha256_init_ctx(&ctx_);
+        sha256_copy_ctx(&ctx_, ctx->ctx_base);
         sha256_add_to_ctx(&ctx_, (const uint8_t*)&ctr_be, 4);
         uint8_t res[N];
         sha256_finalize(&ctx_, res);
@@ -248,8 +248,8 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
 
     // Build ctx_base once: hash_ctx || adrs || message — shared read-only between workers
     SHA256_CTX ctx_base;
-    mbedtls_sha256_init(&ctx_base);
-    mbedtls_sha256_clone(&ctx_base, hash_ctx);
+    sha256_init_ctx(&ctx_base);
+    sha256_copy_ctx(&ctx_base, hash_ctx);
     sha256_add_to_ctx(&ctx_base, adrs, 32);
     sha256_add_to_ctx(&ctx_base, message, message_len);
 
@@ -286,8 +286,8 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
             uint32_t ctr_be;
             REVERSE32(ctr, ctr_be);
             SHA256_CTX ctx_;
-            mbedtls_sha256_init(&ctx_);
-            mbedtls_sha256_clone(&ctx_, &ctx_base);
+            sha256_init_ctx(&ctx_);
+            sha256_copy_ctx(&ctx_, &ctx_base);
             sha256_add_to_ctx(&ctx_, (const uint8_t*)&ctr_be, 4);
             uint8_t res[N];
             sha256_finalize(&ctx_, res);
@@ -303,7 +303,7 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
             }
         }
         if (primary_found) memcpy(msg_out, primary_msg, L);
-        mbedtls_sha256_free(&ctx_base);
+        sha256_free_ctx(&ctx_base);
         return result_ctr;
     }
 
@@ -320,8 +320,8 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
         uint32_t ctr_be;
         REVERSE32(ctr, ctr_be);
         SHA256_CTX ctx_;
-        mbedtls_sha256_init(&ctx_);
-        mbedtls_sha256_clone(&ctx_, &ctx_base);
+        sha256_init_ctx(&ctx_);
+        sha256_copy_ctx(&ctx_, &ctx_base);
         sha256_add_to_ctx(&ctx_, (const uint8_t*)&ctr_be, 4);
         uint8_t res[N];
         sha256_finalize(&ctx_, res);
@@ -368,8 +368,8 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
         uint32_t ctr_be;
         REVERSE32(ctr, ctr_be);
         SHA256_CTX ctx_;
-        mbedtls_sha256_init(&ctx_);
-        mbedtls_sha256_clone(&ctx_, &ctx_base);
+        sha256_init_ctx(&ctx_);
+        sha256_copy_ctx(&ctx_, &ctx_base);
         sha256_add_to_ctx(&ctx_, (const uint8_t*)&ctr_be, 4);
         uint8_t res[N];
         sha256_finalize(&ctx_, res);
@@ -393,7 +393,7 @@ uint32_t wots_grind(const uint8_t* message, uint32_t message_len, SHA256_CTX* ha
 
 #endif // CONFIG_FREERTOS_UNICORE
 
-    mbedtls_sha256_free(&ctx_base);
+    sha256_free_ctx(&ctx_base);
     return result_ctr;
 }
 
@@ -411,8 +411,8 @@ uint32_t wots_digest(const uint8_t* message, uint32_t message_len, SHA256_CTX* h
     setKeyPairAddress(adrs, keypair);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
     sha256_add_to_ctx(&ctx, adrs, 32);
     sha256_add_to_ctx(&ctx, message, message_len);
 
@@ -461,8 +461,8 @@ void wots_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_s
     else
     {
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         setTypeAndClear(adrs, H_MSG_TYPE);
         sha256_add_to_ctx(&ctx, adrs, 32);
@@ -492,8 +492,8 @@ void wots_sign(const uint8_t* message, uint32_t message_len, const uint8_t* sk_s
         setChainAddress(adrs, i);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, sk_seed, N);
@@ -547,8 +547,8 @@ uint32_t wots_pk_from_sig(const uint8_t* sig, const uint8_t* message, uint32_t m
     else
     {
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         setTypeAndClear(adrs, H_MSG_TYPE);
         sha256_add_to_ctx(&ctx, adrs, 32);
@@ -585,8 +585,8 @@ uint32_t wots_pk_from_sig(const uint8_t* sig, const uint8_t* message, uint32_t m
     setKeyPairAddress(adrs, keypair);
     
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
     sha256_add_to_ctx(&ctx, adrs, 32);
 
     for(uint32_t i = 0; i < L; i++)

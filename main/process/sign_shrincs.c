@@ -6,6 +6,7 @@
 #include "../wallet.h"
 #include "process_utils.h"
 #include "../shrincs/shrincs.h"
+#include "../pq_hw_sha.h"
 #include "../storage.h"
 #include "utils/malloc_ext.h"
 #include <mbedtls/sha512.h>
@@ -39,7 +40,7 @@ void shrincs_key_gen_process(void* process_ptr)
     uint8_t adrs[32] = {0};
 
     SHA256_CTX hash_ctx;
-    mbedtls_sha256_init(&hash_ctx);
+    sha256_init_ctx(&hash_ctx);
 
     sha256_add_to_ctx(&hash_ctx, sha512_out + 2*N, N);
     // Add zeros
@@ -47,7 +48,9 @@ void shrincs_key_gen_process(void* process_ptr)
     sha256_add_to_ctx(&hash_ctx, adrs, 16);
     
     uint8_t pk_sf[N]; 
+    pq_hw_sha_begin();
     uxmss_root(sha512_out, &hash_ctx, adrs, pk_sf, leaves + N);
+    pq_hw_sha_end();
 
     // Prefix with pk_root as the cache fingerprint, and persist to NVS
     memcpy(leaves, pk_sf, N);
@@ -65,7 +68,11 @@ cleanup:
 static void jade_progress_adapter(uint16_t current, void* userdata)
 {
     shrincs_progress_t* sp = (shrincs_progress_t*)userdata;
+    /* Hand the SHA peripheral back over the callback: the crypto lock is not
+     * re-entrant, so anything the UI reaches that hashes would deadlock. */
+    pq_hw_sha_suspend();
     update_shrincs_progress(sp, 1000, current);
+    pq_hw_sha_resume();
 }
 
 void sign_shrincs_process(void* process_ptr)
@@ -152,7 +159,9 @@ void sign_shrincs_process(void* process_ptr)
 
     sig_output = JADE_MALLOC(sig_len);
 
+    pq_hw_sha_begin();
     const uint32_t sign_ok = shrincs_sign_stateful((const uint8_t*)message, msg_len, &sk, &state, swn, sig_output, jade_progress_adapter, &shrincs, leaf_cache);
+    pq_hw_sha_end();
     free(leaves);
     if (!sign_ok) {
         jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Sign failed");

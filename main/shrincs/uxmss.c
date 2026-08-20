@@ -41,8 +41,8 @@ void uxmss_treehash(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs,
         setTreeIndex(adrs, 0);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, left, N);
@@ -111,8 +111,8 @@ void uxmss_pk_from_sig(const uint8_t* wots_sig, const uint8_t* auth, const uint8
         setTreeIndex(adrs, 0);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
 
         sha256_add_to_ctx(&ctx, adrs, 32);
         sha256_add_to_ctx(&ctx, out, N);
@@ -141,8 +141,8 @@ void uxmss_pk_from_sig(const uint8_t* wots_sig, const uint8_t* auth, const uint8
             setTreeIndex(adrs, 0);
 
             SHA256_CTX ctx;
-            mbedtls_sha256_init(&ctx);
-            mbedtls_sha256_clone(&ctx, hash_ctx);
+            sha256_init_ctx(&ctx);
+            sha256_copy_ctx(&ctx, hash_ctx);
 
             sha256_add_to_ctx(&ctx, adrs, 32);
             sha256_add_to_ctx(&ctx, auth + N*i, N);

@@ -17,8 +17,8 @@ void xmss_treehash(const uint8_t* sk_seed, SHA256_CTX* hash_ctx, uint8_t* adrs, 
     setTreeIndex(adrs, start_idx >> target_height);
 
     SHA256_CTX ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_clone(&ctx, hash_ctx);
+    sha256_init_ctx(&ctx);
+    sha256_copy_ctx(&ctx, hash_ctx);
     sha256_add_to_ctx(&ctx, adrs, 32);
     sha256_add_to_ctx(&ctx, left, N);
     sha256_add_to_ctx(&ctx, right, N);
@@ -54,8 +54,8 @@ void xmss_pk_from_sig(const uint8_t* wots_sig, const uint8_t* auth, const uint8_
         memcpy(auth_node, auth + N*i, N);
 
         SHA256_CTX ctx;
-        mbedtls_sha256_init(&ctx);
-        mbedtls_sha256_clone(&ctx, hash_ctx);
+        sha256_init_ctx(&ctx);
+        sha256_copy_ctx(&ctx, hash_ctx);
         sha256_add_to_ctx(&ctx, adrs, 32);
         if ((idx & 1) == 0)
         {
