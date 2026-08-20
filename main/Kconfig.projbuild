@@ -31,6 +31,19 @@ menu "Blockstream Jade"
             SHA engine supports resuming from an arbitrary midstate
             (SOC_SHA_SUPPORT_RESUME).
 
+    config JADE_PQ_HW_SHA_YIELD_EVERY
+        int "Hand the SHA peripheral back every N compressions (0 to disable)"
+        depends on JADE_PQ_HW_SHA
+        default 1024
+        help
+            While the SHA peripheral is held, nothing else on the device can use
+            SHA or AES -- and on this IDF the legacy mbedtls_sha256_* API is
+            hardware-backed too, so libwally and much else contends for it.
+            Relying on the per-layer progress callback alone leaves gaps of
+            seconds.  Releasing and reacquiring every N compressions bounds that
+            to a few milliseconds; at the default it costs well under 1% of the
+            operation.
+
     config AMALGAMATED_BUILD
         bool "Amalgamated build"
         default y

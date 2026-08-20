@@ -24,10 +24,14 @@
 static int s_hold_depth = 0;
 /* Set while the hold is temporarily handed back by pq_hw_sha_suspend(). */
 static bool s_suspended = false;
+/* Compressions since the peripheral was last handed back, for the periodic
+ * yield below. */
+static uint32_t s_since_yield = 0;
 
 #ifdef CONFIG_JADE_PQ_BENCH
 pq_sha_mode_t pq_hw_sha_mode = PQ_SHA_HW_HELD;
 uint32_t pq_hw_sha_worst_hold_us = 0;
+uint32_t pq_hw_sha_yield_count = 0;
 static int64_t s_held_since = 0;
 
 /* Called whenever the peripheral is actually taken. */
@@ -57,6 +61,7 @@ void pq_hw_sha_begin(void)
         return;
     }
     if (s_hold_depth++ == 0) {
+        s_since_yield = 0;
         esp_sha_acquire_hardware();
         esp_sha_set_mode(SHA2_256);
         bench_hold_started();
@@ -93,6 +98,7 @@ void pq_hw_sha_resume(void)
         esp_sha_set_mode(SHA2_256);
         bench_hold_started();
         s_suspended = false;
+        s_since_yield = 0;
     }
 }
 
@@ -166,6 +172,25 @@ void sha2_256_compress(void* v)
      * pq_hw_sha_begin() costs speed, never a wrong answer or a panic -- for
      * one predictable branch against roughly a thousand cycles of work. */
     if (s_hold_depth > 0 && !s_suspended) {
+#if CONFIG_JADE_PQ_HW_SHA_YIELD_EVERY > 0
+        /* The per-layer progress callback is far too coarse to be the only
+         * yield point: measured on an S3 at 240 MHz it leaves the rest of the
+         * device without SHA or AES for 2.6 s at a stretch (the run from the
+         * start of FORS to the end of the first hypertree layer).  Handing the
+         * peripheral back on a fixed compression count bounds that to a few
+         * milliseconds, and costs a release/acquire pair -- about 2290 cycles
+         * -- once per CONFIG_JADE_PQ_HW_SHA_YIELD_EVERY compressions of
+         * roughly 1170 cycles each, so well under 1%. */
+        if (++s_since_yield >= CONFIG_JADE_PQ_HW_SHA_YIELD_EVERY) {
+#ifdef CONFIG_JADE_PQ_BENCH
+            ++pq_hw_sha_yield_count;
+#endif
+            /* Safe here, between compressions: no SLH-DSA state lives in the
+             * peripheral, since every compression reloads the full midstate. */
+            pq_hw_sha_suspend();
+            pq_hw_sha_resume();
+        }
+#endif
         sha2_256_compress_hw(v);
         return;
     }

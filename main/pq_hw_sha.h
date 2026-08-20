@@ -89,6 +89,9 @@ extern pq_sha_mode_t pq_hw_sha_mode;
  * actually taken -- i.e. how long the rest of the device went without SHA and
  * AES.  Reset it before an operation and read it after. */
 extern uint32_t pq_hw_sha_worst_hold_us;
+
+/* Number of periodic hand-backs performed. */
+extern uint32_t pq_hw_sha_yield_count;
 #endif
 
 #else /* !CONFIG_JADE_PQ_HW_SHA */
