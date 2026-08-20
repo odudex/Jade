@@ -1,8 +1,15 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <mbedtls/sha256.h>
-#include <mbedtls/sha512.h>
+/*
+ * Jade: hash through the same SHA-256/512 implementation as SLH-DSA, so that
+ * all of it goes via sha2_256_compress() and picks up the held hardware
+ * accelerator (see pq_hw_sha.h).  mbedtls_sha256() is hardware-backed on this
+ * IDF, but acquires and releases the peripheral on every single call -- and
+ * XMSS calls it once per hash, over inputs of a few dozen bytes, so that
+ * overhead is most of the cost.
+ */
+#include "../slh_dsa/sha2_api.h"
 
 #include "hash_address.h"
 #include "utils.h"
@@ -32,14 +39,14 @@ static int core_hash(const xmss_params *params,
     unsigned char buf[64];
 
     if (params->n == 24 && params->func == XMSS_SHA2) {
-        mbedtls_sha256(in, inlen, buf, 0);
+        sha2_256(buf, in, inlen);
         memcpy(out, buf, 24);
     }
     else if (params->n == 24 && params->func == XMSS_SHAKE256) {
         shake256(out, 24, in, inlen);
     }   
     else if (params->n == 32 && params->func == XMSS_SHA2) {
-        mbedtls_sha256(in, inlen, out, 0);
+        sha2_256(out, in, inlen);
     }
     else if (params->n == 32 && params->func == XMSS_SHAKE128) {
         shake128(out, 32, in, inlen);
@@ -48,13 +55,13 @@ static int core_hash(const xmss_params *params,
         shake256(out, 32, in, inlen);
     }
     else if (params->n == 64 && params->func == XMSS_SHA2) {
-        mbedtls_sha512(in, inlen, out, 0);
+        sha2_512(out, in, inlen);
     }
     else if (params->n == 64 && params->func == XMSS_SHAKE256) {
         shake256(out, 64, in, inlen);
     }
     else if (params->n == 16 && params->func == XMSS_SHA2) {
-        mbedtls_sha256(in, inlen, buf, 0);
+        sha2_256(buf, in, inlen);
         memcpy(out, buf, 16);
     }
     else {

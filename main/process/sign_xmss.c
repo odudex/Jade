@@ -6,6 +6,7 @@
 #include "../wallet.h"
 #include "process_utils.h"
 #include "../xmss/xmss_core.h"
+#include "../pq_hw_sha.h"
 // #include "../storage.h"
 #include "utils/malloc_ext.h"
 #include <mbedtls/sha512.h>
@@ -13,7 +14,11 @@
 static void xmss_progress_adapter(uint32_t current, uint32_t total, void* userdata)
 {
     progress_bar_t* pb = (progress_bar_t*)userdata;
+    /* Hand the SHA peripheral back over the callback: the crypto lock is not
+     * re-entrant, so anything the UI reaches that hashes would deadlock. */
+    pq_hw_sha_suspend();
     update_progress_bar(pb, total, current);
+    pq_hw_sha_resume();
 }
 
 void xmss_key_gen_process(void* process_ptr)
@@ -61,9 +66,11 @@ void xmss_key_gen_process(void* process_ptr)
         sk[XMSS_OID_LEN - i - 1] = (oid >> (8 * i)) & 0xFF;
     }
 
+    pq_hw_sha_begin();
     xmssmt_core_seed_keypair(&xparams, pk + XMSS_OID_LEN, sk + XMSS_OID_LEN,
                              sha512_out,
                              xmss_progress_adapter, &pb);
+    pq_hw_sha_end();
 
     jade_process_reply_to_message_bytes(&process->ctx, sk, sk_total);
 
@@ -137,9 +144,11 @@ void sign_xmss_process(void* process_ptr)
     unsigned long long smlen = 0;
     sig_output = JADE_MALLOC(sm_max);
 
+    pq_hw_sha_begin();
     ret = xmss_core_sign(&xparams, sk_bytes + XMSS_OID_LEN, sig_output, &smlen,
                          message, msg_len,
                          xmss_progress_adapter, &pb);
+    pq_hw_sha_end();
     if (ret != 0) {
         jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Sign failed");
         goto cleanup;

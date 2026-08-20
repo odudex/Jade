@@ -40,7 +40,7 @@ endif()
 
 set(extra_src_dirs "")
 if(NOT CONFIG_AMALGAMATED_BUILD)
-    list(APPEND extra_src_dirs "slh_dsa" "shrincs")
+    list(APPEND extra_src_dirs "slh_dsa" "shrincs" "xmss")
 endif()
 
 idf_component_register(SRC_DIRS "."
