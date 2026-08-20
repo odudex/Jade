@@ -129,6 +129,7 @@ void __wrap_abort(void);
 #include "./shrincs/wots_c.c"
 #include "./shrincs/xmss.c"
 #endif
+#include "./pq_hw_sha.c"
 #include "./slh_dsa/sha2_256.c"
 #include "./slh_dsa/sha2_512.c"
 #include "./slh_dsa/sha3_api.c"

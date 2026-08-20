@@ -8,6 +8,9 @@
 #include <string.h>
 #include "plat_local.h"
 #include "sha2_api.h"
+/* Jade: sha2_256_compress() itself lives in pq_hw_sha.c, which dispatches
+ * to either this portable implementation or the ESP32 SHA accelerator. */
+#include "../pq_hw_sha.h"
 
 #ifdef SLH_EXPERIMENTAL
 uint64_t sha2_256_compress_count = 0; /* instrumentation */
@@ -31,7 +34,7 @@ uint64_t sha2_256_compress_count = 0; /* instrumentation */
           (ror32(xe, 17) ^ ror32(xe, 19) ^ (xe >> 10));     \
   }
 
-void sha2_256_compress(void *v)
+void sha2_256_compress_sw(void *v)
 {
   /* 4.2.2 SHA-224 and SHA-256 Constants */
 

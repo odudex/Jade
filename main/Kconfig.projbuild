@@ -20,6 +20,17 @@ menu "Blockstream Jade"
                 Time in milliseconds after which actions are automatically approved and workflows proceed.
     endmenu
 
+    config JADE_PQ_HW_SHA
+        bool "Use the SHA accelerator for the post-quantum signature schemes"
+        depends on IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32P4
+        default y
+        help
+            Route the SHA-256 compression used by SLH-DSA, SHRINCS and XMSS onto
+            the hardware SHA accelerator, holding the peripheral for the whole
+            operation rather than acquiring it per hash.  Requires a target whose
+            SHA engine supports resuming from an arbitrary midstate
+            (SOC_SHA_SUPPORT_RESUME).
+
     config AMALGAMATED_BUILD
         bool "Amalgamated build"
         default y
