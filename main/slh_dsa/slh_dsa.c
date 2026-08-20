@@ -7,6 +7,10 @@
 
 #include "slh_dsa.h"
 #include "slh_adrs.h"
+/* Jade: hold the SHA accelerator across a whole operation.  Bracketing here
+ * rather than at the call sites means no caller -- RPC path, test path or
+ * benchmark -- can forget to, and the brackets nest safely. */
+#include "../pq_hw_sha.h"
 #include "slh_var.h"
 #include "slh_sys.h"
 
@@ -391,8 +395,15 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
 
   if (var->prog_cb) {
     var->prog_done++;
+    /* Jade: hand the SHA peripheral back over the callback.  This is both the
+     * yield point that keeps the rest of the device able to use SHA/AES during
+     * a multi-second signature, and what makes it safe for the callback itself
+     * to hash -- the crypto lock is not re-entrant, so calling out to the UI or
+     * the transport while still holding it would deadlock with no panic. */
+    pq_hw_sha_suspend();
     var->prog_cb((uint16_t)((uint64_t)var->prog_done * 1000 / var->prog_total),
                  var->prog_ud);
+    pq_hw_sha_resume();
   }
 
   for (j = 1; j < prm->d; j++)
@@ -409,8 +420,10 @@ static size_t slhi_ht_sign(slh_var_t *var, uint8_t *sh, uint8_t *m, uint64_t i_t
 
     if (var->prog_cb) {
       var->prog_done++;
+      pq_hw_sha_suspend();
       var->prog_cb((uint16_t)((uint64_t)var->prog_done * 1000 / var->prog_total),
                    var->prog_ud);
+      pq_hw_sha_resume();
     }
   }
 
@@ -656,6 +669,8 @@ int slh_keygen_internal(uint8_t *sk, uint8_t *pk, const uint8_t *sk_seed,
   slh_var_t var;
   size_t n = prm->n;
 
+  pq_hw_sha_begin();
+
   memcpy(sk, sk_seed, n);           /* SK_seed */
   memcpy(sk + n, sk_prf, n);        /* SK.prf */
   memcpy(sk + 2 * n, pk_seed, n);   /* PK.seed */
@@ -669,6 +684,7 @@ int slh_keygen_internal(uint8_t *sk, uint8_t *pk, const uint8_t *sk_seed,
   slhi_xmss_node(&var, pk + n, 0, prm->hp); /* PK.root in pk (compute) */
   memcpy(sk + 3 * n, pk + n, n);       /* PK.root in sk */
 
+  pq_hw_sha_end();
   return 0;
 }
 
@@ -682,6 +698,8 @@ int slh_keygen(uint8_t *sk, uint8_t *pk, int (*rbg)(uint8_t *x, size_t xlen),
   uint8_t pk_root[SLH_MAX_N];
   size_t n = prm->n;
 
+  pq_hw_sha_begin();
+
   rbg(sk, 3 * n);                   /* SK.seed || SK.prf || PK.seed */
   memcpy(pk, sk + 2 * n, n);        /* PK.seed */
   memset(sk + 3 * n, 0x00, n);      /* PK.root not generated yet */
@@ -694,6 +712,8 @@ int slh_keygen(uint8_t *sk, uint8_t *pk, int (*rbg)(uint8_t *x, size_t xlen),
   /* fill pk_root */
   memcpy(sk + 3 * n, pk_root, n);
   memcpy(pk + n, pk_root, n);
+
+  pq_hw_sha_end();
   return 0;
 }
 
@@ -761,6 +781,8 @@ size_t slh_sign_internal(uint8_t *sig, const uint8_t *m, size_t m_sz,
   uint8_t digest[SLH_MAX_M];
   size_t sig_sz;
 
+  pq_hw_sha_begin();
+
   /* set up secret key etc */
   prm->mk_var(&var, NULL, sk, prm);
 
@@ -781,6 +803,7 @@ size_t slh_sign_internal(uint8_t *sig, const uint8_t *m, size_t m_sz,
   /* create FORS and HT signature parts */
   sig_sz += slh_sign_digest(&var, sig + sig_sz, digest);
 
+  pq_hw_sha_end();
   return sig_sz;
 }
 
@@ -800,6 +823,8 @@ size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz, const uint8_t *ctx,
   {
     return 0;
   }
+
+  pq_hw_sha_begin();
 
   /* set up secret key etc */
   prm->mk_var(&var, NULL, sk, prm);
@@ -824,6 +849,7 @@ size_t slh_sign(uint8_t *sig, const uint8_t *m, size_t m_sz, const uint8_t *ctx,
   /* create FORS and HT signature parts */
   sig_sz += slh_sign_digest(&var, sig + sig_sz, digest);
 
+  pq_hw_sha_end();
   return sig_sz;
 }
 
@@ -871,12 +897,18 @@ int slh_verify_internal(const uint8_t *m, size_t m_sz, const uint8_t *sig,
 {
   slh_var_t var;
   uint8_t digest[SLH_MAX_M];
+  int ret;
+
+  pq_hw_sha_begin();
 
   /* use Hmsg directly */
   prm->mk_var(&var, pk, NULL, prm);
   prm->h_msg(&var, digest, sig, m, m_sz, NULL, SLH_CTX_SZ_NO_CONTEXT);
 
-  return slh_verify_digest(&var, digest, sig, sig_sz, prm);
+  ret = slh_verify_digest(&var, digest, sig, sig_sz, prm);
+
+  pq_hw_sha_end();
+  return ret;
 }
 
 /* === Verifies a pure SLH-DSA signature. */
@@ -888,15 +920,21 @@ int slh_verify(const uint8_t *m, size_t m_sz, const uint8_t *sig, size_t sig_sz,
 {
   slh_var_t var;
   uint8_t digest[SLH_MAX_M];
+  int ret;
 
   if (ctx_sz > 255)
   {
     return 0; /* false */
   }
 
+  pq_hw_sha_begin();
+
   /* create the "pure" hash (with context) */
   prm->mk_var(&var, pk, NULL, prm);
   prm->h_msg(&var, digest, sig, m, m_sz, ctx, ctx_sz);
 
-  return slh_verify_digest(&var, digest, sig, sig_sz, prm);
+  ret = slh_verify_digest(&var, digest, sig, sig_sz, prm);
+
+  pq_hw_sha_end();
+  return ret;
 }
