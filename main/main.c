@@ -33,6 +33,7 @@
 #endif
 #include "sensitive.h"
 #include "serial.h"
+#include "pq_bench.h"
 #include "wifi.h"
 #ifdef CONFIG_ETH_USE_OPENETH
 #ifdef CONFIG_HAS_CAMERA
@@ -297,6 +298,11 @@ static void start_dashboard(void)
 
 void app_main(void)
 {
+    // Development builds only: price SHA-256 compression on the accelerator,
+    // run the SLH-DSA known-answer tests and time KeyGen/SigGen, before
+    // anything else can contend for the SHA peripheral.
+    pq_bench_run();
+
     ensure_boot_flags();
     random_start_collecting();
     validate_running_image();

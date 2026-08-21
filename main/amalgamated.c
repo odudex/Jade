@@ -138,6 +138,7 @@ void __wrap_abort(void);
 #include "./slh_dsa/slh_prehash.c"
 #include "./slh_dsa/slh_sha2.c"
 #include "./slh_dsa/slh_shake.c"
+#include "./pq_bench.c"
 #include "./xmss/fips202.c"
 #include "./xmss/hash_address.c"
 #include "./xmss/hash.c"

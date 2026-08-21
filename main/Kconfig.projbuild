@@ -44,6 +44,18 @@ menu "Blockstream Jade"
             to a few milliseconds; at the default it costs well under 1% of the
             operation.
 
+    config JADE_PQ_BENCH
+        bool "Run post-quantum hash benchmarks and known-answer tests at boot"
+        depends on JADE_PQ_HW_SHA
+        default n
+        help
+            Development only.  Prints a per-compression cost table (software vs.
+            hardware acquired per call vs. hardware held), runs the NIST ACVP
+            known-answer tests in both configurations, and times KeyGen and SigGen
+            for SLH-DSA, SHRINCS and XMSS both ways before handing over to the
+            dashboard.  Makes sha2_256_compress() switchable at runtime so both
+            configurations can be measured from a single image.
+
     config AMALGAMATED_BUILD
         bool "Amalgamated build"
         default y
